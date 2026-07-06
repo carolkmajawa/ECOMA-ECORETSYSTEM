@@ -142,12 +142,16 @@ class LoanRequest(models.Model):
         self.save()
 
 
-# ✅ UPDATED: Group Loan Settings with separate rates for each loan type
 class LoanSettings(models.Model):
     """Group loan settings with dynamic interest rates"""
     group = models.OneToOneField(Group, on_delete=models.CASCADE, related_name='loan_settings')
     
-    # ===== GROUP LOAN SETTINGS (Set by Group Chairman) =====
+    default_interest_rate = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2,
+        default=10.00,
+        help_text="Default interest rate (%) for all loans"
+    )
     group_loan_interest_rate = models.DecimalField(
         max_digits=5, 
         decimal_places=2,
@@ -174,7 +178,6 @@ class LoanSettings(models.Model):
         help_text="Minimum group loan amount. Set by group chairman."
     )
     
-    # ===== ECORET LOAN SETTINGS (Set by ECORET Admin) =====
     ecoret_loan_interest_rate = models.DecimalField(
         max_digits=5, 
         decimal_places=2,
@@ -201,7 +204,6 @@ class LoanSettings(models.Model):
         help_text="Minimum ECORET loan amount. Set by ECORET admin."
     )
     
-    # ===== GENERAL SETTINGS =====
     requires_guarantor = models.BooleanField(
         default=True,
         help_text="Does this group require a guarantor for loans?"
@@ -234,14 +236,12 @@ class LoanSettings(models.Model):
         return f'Loan Settings - {self.group.group_name}'
 
 
-# ✅ NEW: ECORET Global Settings
 class ECORETSettings(models.Model):
     """
     Global settings for ECORET.
     Only one instance should exist in the database.
     """
     
-    # ===== ECORET LOAN RATES =====
     ecoret_loan_interest_rate = models.DecimalField(
         max_digits=5, 
         decimal_places=2,
@@ -268,7 +268,6 @@ class ECORETSettings(models.Model):
         help_text="Minimum ECORET loan amount"
     )
     
-    # ===== ECORET SERVICE FEES =====
     service_fee_percentage = models.DecimalField(
         max_digits=5, 
         decimal_places=2,
@@ -276,7 +275,6 @@ class ECORETSettings(models.Model):
         help_text="ECORET service fee (%) per transaction"
     )
     
-    # ===== AUDIT =====
     updated_by = models.ForeignKey(
         User, 
         on_delete=models.SET_NULL, 
@@ -294,7 +292,6 @@ class ECORETSettings(models.Model):
         return "ECORET Loan Settings"
     
     def save(self, *args, **kwargs):
-        # Ensure only one instance exists
         if not self.pk and ECORETSettings.objects.exists():
             raise Exception("ECORET settings already exist. Only one instance allowed.")
         super().save(*args, **kwargs)

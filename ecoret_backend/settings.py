@@ -34,8 +34,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'django_filters',
     'drf_yasg',
-    
-    # Custom apps
+    'apps.sync',
     'apps.accounts',
     'apps.groups',
     'apps.loans',

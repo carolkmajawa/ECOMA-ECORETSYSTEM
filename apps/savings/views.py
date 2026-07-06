@@ -43,7 +43,6 @@ class SavingViewSet(viewsets.ModelViewSet):
         member = serializer.validated_data['member']
         group = member.group
         
-        # Check if group is active
         if not group.is_active:
             return Response(
                 {'error': 'Group must be active to record savings'},
@@ -132,7 +131,6 @@ class SavingGoalViewSet(viewsets.ModelViewSet):
         return SavingGoal.objects.filter(group__in=groups)
     
     def create(self, request):
-        # Get user's group
         group = request.user.chairman_groups.first()
         if not group:
             return Response(

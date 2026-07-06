@@ -53,26 +53,22 @@ class LoanViewSet(viewsets.ModelViewSet):
                 {'error': 'Member is not active'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
         if not group.is_active:
             return Response(
                 {'error': 'Group must be active to request loans'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ✅ Get loan settings with UNIFIED interest rate
         try:
             loan_settings = LoanSettings.objects.get(group=group)
 
-            # ✅ Unified interest rate (same for both loan types)
             interest_rate = loan_settings.default_interest_rate
 
-            # Duration and limits depend on loan type
             if loan_type == 'group_loan':
                 duration_months = loan_settings.group_loan_duration_months
                 max_amount = loan_settings.group_loan_max_amount
                 min_amount = loan_settings.group_loan_min_amount
-            else:  # ecoret_loan
+            else: 
                 duration_months = loan_settings.ecoret_loan_duration_months
                 max_amount = loan_settings.ecoret_loan_max_amount
                 min_amount = loan_settings.ecoret_loan_min_amount
@@ -83,7 +79,6 @@ class LoanViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Validate amount
         if amount < min_amount:
             return Response(
                 {'error': f'Minimum loan amount is MK{min_amount:,.2f}'},
@@ -96,17 +91,15 @@ class LoanViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ✅ Calculate total payable with unified interest rate
         total_payable = amount * (1 + interest_rate / 100)
 
-        # Create loan
         loan = Loan.objects.create(
             group=group,
             member=member,
             created_by=request.user,
             loan_type=loan_type,
             amount=amount,
-            interest_rate=interest_rate,  # ← Unified rate
+            interest_rate=interest_rate,
             duration_months=duration_months,
             total_payable=total_payable,
             due_date=timezone.now() + timezone.timedelta(days=duration_months * 30),
@@ -127,10 +120,6 @@ class LoanViewSet(viewsets.ModelViewSet):
 
         return Response(LoanSerializer(loan).data, status=status.HTTP_201_CREATED)
 
-    # ============================================================
-    # 📋 LOAN ACTIONS
-    # ============================================================
-
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve a pending loan"""
@@ -143,7 +132,6 @@ class LoanViewSet(viewsets.ModelViewSet):
 
         loan.approve(request.user)
 
-        # Send notification
         notification = NotificationService()
         notification.send_loan_approval_notification(loan)
 
@@ -185,10 +173,6 @@ class LoanViewSet(viewsets.ModelViewSet):
 
         return Response({'message': 'Loan disbursed successfully'})
 
-    # ============================================================
-    # 💰 LOAN REPAYMENTS
-    # ============================================================
-
     @action(detail=True, methods=['post'])
     def record_repayment(self, request, pk=None):
         """Record a loan repayment"""
@@ -202,7 +186,6 @@ class LoanViewSet(viewsets.ModelViewSet):
         serializer = LoanRepaymentCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Calculate principal and interest
         amount = serializer.validated_data['amount']
         balance = loan.get_balance()
 
@@ -212,7 +195,6 @@ class LoanViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Simple calculation - principal first, then interest
         total_paid = loan.repayments.aggregate(total=Sum('amount'))['total'] or 0
         remaining_principal = loan.total_payable - total_paid
 
@@ -232,16 +214,11 @@ class LoanViewSet(viewsets.ModelViewSet):
             **serializer.validated_data
         )
 
-        # Check if loan is completed
         if loan.get_balance() <= 0:
             loan.status = 'completed'
             loan.save()
 
         return Response(LoanRepaymentSerializer(repayment).data, status=status.HTTP_201_CREATED)
-
-    # ============================================================
-    # 📊 LOAN INFORMATION
-    # ============================================================
 
     @action(detail=True, methods=['get'])
     def balance(self, request, pk=None):
@@ -284,7 +261,6 @@ class LoanRequestViewSet(viewsets.ModelViewSet):
 
     def create(self, request):
         """Create an ECORET loan request"""
-        # Check if user is chairman
         groups = request.user.chairman_groups.all()
         if not groups.exists():
             return Response(
@@ -292,7 +268,6 @@ class LoanRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Use the first group
         group = groups.first()
 
         serializer = LoanRequestCreateSerializer(data=request.data)
@@ -304,7 +279,6 @@ class LoanRequestViewSet(viewsets.ModelViewSet):
             **serializer.validated_data
         )
 
-        # Send notification to ECORET admin
         notification = NotificationService()
         notification.send_new_loan_request_notification(loan_request)
 
@@ -334,7 +308,6 @@ class LoanRequestViewSet(viewsets.ModelViewSet):
 
         loan_request.approve(request.user)
 
-        # Get chairman as the loan recipient
         chairman = loan_request.group.chairman
         if not chairman:
             return Response(
@@ -351,7 +324,6 @@ class LoanRequestViewSet(viewsets.ModelViewSet):
 
         amount = loan_request.amount
 
-        # ✅ Get ECORET settings
         from .models import ECORETSettings
         ecoret_settings = ECORETSettings.objects.first()
         if not ecoret_settings:
@@ -360,13 +332,11 @@ class LoanRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ✅ Use values from ECORET settings
         interest_rate = ecoret_settings.ecoret_loan_interest_rate
         duration_months = ecoret_settings.ecoret_loan_duration_months
         max_amount = ecoret_settings.ecoret_loan_max_amount
         min_amount = ecoret_settings.ecoret_loan_min_amount
 
-        # Validate against ECORET limits
         if amount < min_amount:
             return Response(
                 {'error': f'ECORET minimum loan is MK{min_amount:,.2f}'},
@@ -379,7 +349,6 @@ class LoanRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ✅ Create loan with ECORET interest rate
         Loan.objects.create(
             group=loan_request.group,
             member=member,
@@ -394,7 +363,6 @@ class LoanRequestViewSet(viewsets.ModelViewSet):
             due_date=timezone.now() + timezone.timedelta(days=duration_months * 30)
         )
 
-        # Send notification
         notification = NotificationService()
         notification.send_loan_request_approved_notification(loan_request)
 
@@ -448,7 +416,7 @@ class LoanSettingsViewSet(viewsets.ModelViewSet):
 
     def create(self, request):
         """Create loan settings for a group"""
-        # Get user's group
+      
         group = request.user.chairman_groups.first()
         if not group:
             return Response(
@@ -465,9 +433,12 @@ class LoanSettingsViewSet(viewsets.ModelViewSet):
         serializer = LoanSettingsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        validated_data = serializer.validated_data.copy()
+        validated_data.pop('group', None)
+
         settings = LoanSettings.objects.create(
             group=group,
-            **serializer.validated_data
+            **validated_data
         )
 
         return Response(LoanSettingsSerializer(settings).data, status=status.HTTP_201_CREATED)

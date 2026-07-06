@@ -57,7 +57,13 @@ class Meeting(models.Model):
         return f'{self.title} - {self.meeting_date}'
     
     def get_attendance_count(self):
-        return self.attendances.filter(attended=True).count()
+        """Get number of attendees for this meeting"""
+        from .models import Attendance
+        return Attendance.objects.filter(
+            group=self.group,
+            meeting_date=self.meeting_date,
+            attended=True
+        ).count()
     
     def get_total_members(self):
         return self.group.members.filter(is_active=True).count()

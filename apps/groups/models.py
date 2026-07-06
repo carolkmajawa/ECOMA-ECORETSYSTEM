@@ -4,12 +4,13 @@ from django.utils import timezone
 from apps.accounts.models import User
 import uuid
 
+
 class Group(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     group_name = models.CharField(max_length=255, db_index=True)
     group_code = models.CharField(max_length=20, unique=True, blank=True, null=True, db_index=True)
     chairman = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True, 
+        User, on_delete=models.SET_NULL, null=True,
         related_name='chairman_groups'
     )
     secretary = models.ForeignKey(
@@ -20,121 +21,85 @@ class Group(models.Model):
         User, on_delete=models.SET_NULL, null=True,
         related_name='treasurer_groups'
     )
-    
-    # ============================================================
-    # 🏦 BANK ACCOUNT DETAILS
-    # ============================================================
-    
+
     bank_name = models.CharField(max_length=100, blank=True, null=True)
     bank_account_number = models.CharField(max_length=50, blank=True, null=True)
     billing_number = models.CharField(max_length=50, blank=True, null=True)
     bank_account_name = models.CharField(max_length=200, blank=True, null=True)
     bank_branch = models.CharField(max_length=100, blank=True, null=True)
-    
-    # ============================================================
-    # 📱 MOBILE MONEY DETAILS
-    # ============================================================
-    
+
     mobile_money_provider = models.CharField(
-        max_length=20, 
+        max_length=20,
         choices=[
             ('mpamba', 'Mpamba'),
             ('airtel_money', 'Airtel Money'),
             ('tnm_mpamba', 'TNM Mpamba'),
             ('other', 'Other')
         ],
-        blank=True, 
+        blank=True,
         null=True
     )
     mobile_money_number = models.CharField(max_length=20, blank=True, null=True)
-    
-    # ============================================================
-    # 🌐 ECORET ACCOUNT DETAILS
-    # ============================================================
-    
+
     ecoret_account_id = models.CharField(max_length=50, blank=True, null=True)
     ecoret_billing_code = models.CharField(max_length=50, blank=True, null=True)
-    
-    # ============================================================
-    # 🏦 VIRTUAL ACCOUNT DETAILS
-    # ============================================================
-    
+
     virtual_account_number = models.CharField(max_length=50, blank=True, null=True)
     virtual_account_holder = models.CharField(max_length=200, blank=True, null=True)
-    
-    # ============================================================
-    # 💰 TRANSACTION SETTINGS
-    # ============================================================
-    
+
     daily_transaction_limit = models.DecimalField(max_digits=10, decimal_places=2, default=1000000)
     max_loan_amount = models.DecimalField(max_digits=10, decimal_places=2, default=500000)
-    
-    # ============================================================
-    # ✅ NEW: UNIFIED INTEREST RATE
-    # ============================================================
-    
+
     default_interest_rate = models.DecimalField(
-        max_digits=5, 
-        decimal_places=2, 
+        max_digits=5,
+        decimal_places=2,
         default=10.00,
         help_text="Default interest rate (%) for all loans (Group and ECORET)"
     )
-    
-    # ============================================================
-    # ✅ NEW: GROUP POLICY SETTINGS
-    # ============================================================
-    
+
     social_max_contribution = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
+        max_digits=10,
+        decimal_places=2,
         default=5000.00,
         help_text="Maximum amount a member can contribute to social fund per cycle"
     )
-    
+
     savings_max_contribution = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
+        max_digits=10,
+        decimal_places=2,
         default=10000.00,
         help_text="Maximum savings contribution per member per cycle"
     )
-    
+
     savings_min_contribution = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
+        max_digits=10,
+        decimal_places=2,
         default=500.00,
         help_text="Minimum savings contribution per member per cycle"
     )
-    
-    # ============================================================
-    # ✅ NEW: GROUP CYCLE SETTINGS
-    # ============================================================
-    
+
     cycle_start_date = models.DateField(
-        null=True, 
+        null=True,
         blank=True,
         help_text="Date when the current group cycle starts"
     )
-    
+
     cycle_end_date = models.DateField(
-        null=True, 
+        null=True,
         blank=True,
         help_text="Date when the current group cycle ends"
     )
-    
+
     cycle_duration_months = models.IntegerField(
         default=6,
         help_text="Duration of each group cycle in months"
     )
-    
+
     is_cycle_active = models.BooleanField(
         default=False,
         help_text="Whether the current cycle is active"
     )
-    
-    # ============================================================
-    # ✅ NEW: MEETING SETTINGS
-    # ============================================================
-    
+
     meeting_frequency = models.CharField(
         max_length=20,
         choices=[
@@ -145,7 +110,7 @@ class Group(models.Model):
         default='weekly',
         help_text="How often the group meets"
     )
-    
+
     meeting_day = models.CharField(
         max_length=10,
         choices=[
@@ -160,31 +125,22 @@ class Group(models.Model):
         default='saturday',
         help_text="Which day of the week the group meets"
     )
-    
-    # ============================================================
-    # 🏠 EXISTING FIELDS
-    # ============================================================
-    
+
     address = models.TextField(blank=True)
     profile_photo = models.ImageField(upload_to='group_photos/', blank=True, null=True)
     is_active = models.BooleanField(default=False)
     activation_date = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'groups'
         ordering = ['-created_at']
-    
+
     def __str__(self):
         return self.group_name
-    
-    # ============================================================
-    # 🔧 EXISTING METHODS
-    # ============================================================
-    
+
     def activate(self):
-        """Activate group and generate code"""
         if not self.is_active:
             import random
             import string
@@ -198,76 +154,79 @@ class Group(models.Model):
             self.save()
             return self.group_code
         return None
-    
+
     def get_member_count(self):
         return self.members.filter(is_active=True).count()
-    
-    # ============================================================
-    # ✅ NEW: CYCLE MANAGEMENT METHODS
-    # ============================================================
-    
+
     def start_new_cycle(self, start_date=None, duration_months=None):
-        """
-        Start a new group cycle
-        """
+        from django.utils import timezone
+        from datetime import timedelta
+
         if not start_date:
             start_date = timezone.now().date()
-        
+
+        if isinstance(start_date, str):
+            from datetime import datetime
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+
+        if hasattr(start_date, 'date'):
+            start_date = start_date.date()
+
         self.cycle_start_date = start_date
-        self.cycle_duration_months = duration_months or self.cycle_duration_months
-        self.cycle_end_date = start_date + timezone.timedelta(days=self.cycle_duration_months * 30)
+
+        if duration_months:
+            self.cycle_duration_months = int(duration_months)
+
+        days_to_add = self.cycle_duration_months * 30
+        self.cycle_end_date = start_date + timedelta(days=days_to_add)
+
         self.is_cycle_active = True
         self.save()
-        
+
         return {
             'start_date': self.cycle_start_date,
             'end_date': self.cycle_end_date,
             'duration_months': self.cycle_duration_months
         }
-    
+
     def end_current_cycle(self):
-        """
-        End the current group cycle
-        """
         self.is_cycle_active = False
         self.save()
         return {'message': 'Cycle ended successfully'}
-    
+
     def get_cycle_progress(self):
-        """
-        Get progress of the current cycle
-        """
+        from django.utils import timezone
+
         if not self.is_cycle_active or not self.cycle_start_date:
             return None
-        
+
         today = timezone.now().date()
         total_days = (self.cycle_end_date - self.cycle_start_date).days
         elapsed_days = (today - self.cycle_start_date).days
-        
+
         if total_days <= 0:
             return 100
-        
+
         progress = min(100, (elapsed_days / total_days) * 100)
-        
+
         return {
             'progress': round(progress, 2),
             'elapsed_days': elapsed_days,
             'total_days': total_days,
             'remaining_days': max(0, total_days - elapsed_days)
         }
-    
+
     def get_cycle_status(self):
-        """
-        Get human-readable cycle status
-        """
+        from django.utils import timezone
+
         if not self.is_cycle_active:
             return 'Not Active'
-        
+
         if self.cycle_end_date:
             if timezone.now().date() > self.cycle_end_date:
                 return 'Ended'
             return 'Active'
-        
+
         return 'No Cycle'
 
 
@@ -277,7 +236,7 @@ class GroupMember(models.Model):
         ('F', 'Female'),
         ('O', 'Other'),
     ]
-    
+
     BUSINESS_TYPES = [
         ('farming', 'Farming'),
         ('trading', 'Trading/Shop'),
@@ -296,11 +255,11 @@ class GroupMember(models.Model):
         ('homemaker', 'Homemaker'),
         ('other', 'Other'),
     ]
-    
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='members')
     user = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True, 
+        User, on_delete=models.SET_NULL, null=True,
         related_name='group_memberships'
     )
     full_name = models.CharField(max_length=255)
@@ -313,32 +272,31 @@ class GroupMember(models.Model):
     )
     gender = models.CharField(max_length=1, choices=GENDER_CHOICES, blank=True, null=True)
     address = models.TextField(blank=True)
-    
-    # ✅ BUSINESS TYPE FIELD
+
     business_type = models.CharField(
-        max_length=30, 
-        choices=BUSINESS_TYPES, 
-        blank=True, 
+        max_length=30,
+        choices=BUSINESS_TYPES,
+        blank=True,
         null=True,
         help_text="Type of business/occupation the member does"
     )
     business_description = models.TextField(
-        blank=True, 
+        blank=True,
         null=True,
         help_text="Detailed description of the member's business"
     )
-    
+
     is_active = models.BooleanField(default=True)
     joined_date = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'group_members'
         ordering = ['full_name']
         unique_together = ['group', 'user']
         constraints = [
             models.UniqueConstraint(
-                fields=['group', 'phone_number'], 
+                fields=['group', 'phone_number'],
                 name='unique_group_phone'
             ),
             models.UniqueConstraint(
@@ -346,10 +304,10 @@ class GroupMember(models.Model):
                 name='unique_group_national_id'
             )
         ]
-    
+
     def __str__(self):
         return f'{self.full_name} - {self.group.group_name}'
-    
+
     def get_attendance_percentage(self):
         total_meetings = self.attendances.count()
         if total_meetings == 0:
@@ -366,7 +324,7 @@ class GroupRecord(models.Model):
         ('member_list', 'Member List'),
         ('other', 'Other'),
     ]
-    
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='records')
     record_name = models.CharField(max_length=255)
@@ -375,10 +333,10 @@ class GroupRecord(models.Model):
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     description = models.TextField(blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
-    
+
     class Meta:
         db_table = 'group_records'
         ordering = ['-uploaded_at']
-    
+
     def __str__(self):
         return f'{self.record_name} - {self.group.group_name}'
