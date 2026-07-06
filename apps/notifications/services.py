@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 class NotificationService:
     def __init__(self):
-        # Initialize Africa's Talking
         if settings.AFRICA_TALKING_USERNAME and settings.AFRICA_TALKING_API_KEY:
             africastalking.initialize(
                 settings.AFRICA_TALKING_USERNAME,
@@ -27,7 +26,6 @@ class NotificationService:
         """Send notification to a user"""
         from .models import Notification
         
-        # Create notification record
         notification = Notification.objects.create(
             user=user,
             title=title,
@@ -36,15 +34,12 @@ class NotificationService:
             data=data or {}
         )
         
-        # Get user preferences
         try:
             prefs = user.notification_preferences
         except:
-            # Create default preferences
             from .models import NotificationPreference
             prefs = NotificationPreference.objects.create(user=user)
         
-        # Send via different channels
         if prefs.push_notifications:
             self.send_push_notification(user, title, message, data)
         
@@ -71,7 +66,6 @@ class NotificationService:
             if not fcm_devices:
                 return
             
-            # Send notification
             for device in fcm_devices:
                 device.send_message(
                     Message(
@@ -125,7 +119,7 @@ class NotificationService:
             response = self.sms.send(
                 message,
                 [user.phone_number],
-                sender_id='ECORET'  # Your registered sender ID
+                sender_id='ECORET' 
             )
             logger.info(f"SMS sent to {user.phone_number}: {response}")
             return True
@@ -133,7 +127,6 @@ class NotificationService:
             logger.error(f'Failed to send SMS to {user.phone_number}: {str(e)}')
             return False
     
-    # ✅ NEW: Send SMS directly to a phone number (no user object)
     def send_direct_sms(self, phone_number, message):
         """
         Send SMS directly to a phone number without a user object.
@@ -155,7 +148,6 @@ class NotificationService:
             logger.error(f'Failed to send direct SMS to {phone_number}: {str(e)}')
             return False
     
-    # ✅ NEW: Send member registration SMS
     def send_member_registration_sms(self, member, group):
         """
         Send SMS when a member is registered to a group
@@ -172,7 +164,6 @@ Dial *123# to access your group savings.
         else:
             return self.send_direct_sms(member.phone_number, message)
     
-    # ✅ NEW: Send member removal SMS
     def send_member_removal_sms(self, member, group):
         """
         Send SMS when a member is removed from a group
@@ -186,11 +177,7 @@ Please contact your group chairman for more information.
             return self.send_sms_notification(member.user, message)
         else:
             return self.send_direct_sms(member.phone_number, message)
-    
-    # ============================================================
-    # EXISTING METHODS (Keep these)
-    # ============================================================
-    
+   
     def send_group_notification(self, group, title, message, notification_type='group_notice'):
         """Send notification to all group members"""
         from .models import Notification
@@ -223,7 +210,6 @@ Please contact your group chairman for more information.
                 {'loan_id': str(loan.id)}
             )
         
-        # Also notify group admins
         for admin in [loan.group.chairman, loan.group.secretary]:
             if admin:
                 self.send_notification(
@@ -248,7 +234,6 @@ Please contact your group chairman for more information.
                 {'loan_id': str(loan.id), 'days_left': days_left}
             )
         
-        # Also notify group admins
         for admin in [loan.group.chairman, loan.group.secretary]:
             if admin:
                 self.send_notification(

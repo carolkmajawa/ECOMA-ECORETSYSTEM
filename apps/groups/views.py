@@ -206,8 +206,9 @@ class GroupViewSet(viewsets.ModelViewSet):
             details={
                 'group_id': str(group.id),
                 'group_name': group.group_name,
-                'start_date': result['start_date'],
-                'end_date': result['end_date']
+                'start_date': result['start_date'].isoformat(),  # ← Convert to string
+                'end_date': result['end_date'].isoformat(),      # ← Convert to string
+                'duration_months': result['duration_months']
             }
         )
 

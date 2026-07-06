@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
-from decimal import Decimal 
+from decimal import Decimal
 from .models import Loan, LoanRepayment, LoanRequest, LoanSettings
 
 
@@ -26,35 +26,61 @@ class LoanSerializer(serializers.ModelSerializer):
     def get_total_paid(self, obj):
         return obj.repayments.aggregate(total=serializers.models.Sum('amount'))['total'] or Decimal('0')
 
+class LoanUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating loan details"""
+    class Meta:
+        model = Loan
+        fields = ['status', 'notes']
 
 class LoanCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Loan
         fields = ['member', 'loan_type', 'amount', 'interest_rate', 
                  'duration_months', 'purpose', 'attachment']
+        extra_kwargs = {
+            'interest_rate': {'required': False, 'allow_null': True},
+            'duration_months': {'required': False, 'allow_null': True},
+        }
     
     def validate(self, data):
         amount = data.get('amount')
         
-        # ✅ Convert to Decimal if needed
+        if amount is None:
+            raise serializers.ValidationError({'amount': 'Amount is required'})
+        
         if not isinstance(amount, Decimal):
-            amount = Decimal(str(amount))
+            try:
+                amount = Decimal(str(amount))
+            except:
+                raise serializers.ValidationError({'amount': 'Invalid amount format'})
         
         if amount <= 0:
-            raise serializers.ValidationError('Amount must be greater than 0')
+            raise serializers.ValidationError({'amount': 'Amount must be greater than 0'})
         
-        # ✅ Get interest rate and convert to Decimal
         interest_rate = data.get('interest_rate', Decimal('0'))
-        if not isinstance(interest_rate, Decimal):
-            interest_rate = Decimal(str(interest_rate))
+        if interest_rate is None:
+            interest_rate = Decimal('0')
+        elif not isinstance(interest_rate, Decimal):
+            try:
+                interest_rate = Decimal(str(interest_rate))
+            except:
+                interest_rate = Decimal('0')
         
-        # ✅ Calculate total payable (using Decimal)
         interest = amount * (interest_rate / Decimal('100'))
         data['total_payable'] = amount + interest
         
-        # Set due date
-        duration_months = data.get('duration_months', 1)
+        duration_months = data.get('duration_months')
+        if duration_months:
+            if not isinstance(duration_months, int):
+                try:
+                    duration_months = int(duration_months)
+                except:
+                    duration_months = 1
+        else:
+            duration_months = 1
+        
         data['due_date'] = timezone.now() + timezone.timedelta(days=duration_months * 30)
+        data['duration_months'] = duration_months
         
         return data
 
@@ -120,6 +146,18 @@ class LoanSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = LoanSettings
         fields = [
-            'max_loan_amount', 'default_interest_rate', 'min_duration_months',
-            'max_duration_months', 'requires_guarantor', 'min_guarantors'
+            'id', 'group',
+            'default_interest_rate',
+            'group_loan_duration_months',
+            'group_loan_min_amount',
+            'group_loan_max_amount',
+            'ecoret_loan_duration_months',
+            'ecoret_loan_min_amount',
+            'ecoret_loan_max_amount',
+            'requires_guarantor',
+            'min_guarantors',
+            'grace_period_days',
+            'late_fee_percentage',
+            'created_at', 'updated_at'
         ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
