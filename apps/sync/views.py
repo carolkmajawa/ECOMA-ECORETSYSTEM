@@ -13,7 +13,6 @@ try:
     from apps.shares.models import Share
 except ImportError:
     Share = None
-    logger = logging.getLogger(__name__)
     logger.warning("Shares app not found. Share sync disabled.")
 
 from apps.attendance.models import Attendance, AttendanceCase
@@ -42,7 +41,6 @@ class SyncView(APIView):
             )
         
         try:
-            # Get or create device sync record
             device, created = DeviceSync.objects.get_or_create(
                 user=user,
                 device_id=device_id,
@@ -51,7 +49,6 @@ class SyncView(APIView):
                 }
             )
             
-            # Get user's groups
             if user.role == 'admin':
                 groups = Group.objects.filter(is_active=True)
             else:
@@ -62,15 +59,13 @@ class SyncView(APIView):
                 'members': [],
                 'loans': [],
                 'repayments': [],
-                'shares': [],
+                'savings': [],
                 'attendance': [],
                 'attendance_cases': [],
                 'timestamp': timezone.now().isoformat()
             }
             
-            # Build data for each group
             for group in groups:
-                # Group data
                 response_data['groups'].append({
                     'id': str(group.id),
                     'group_name': group.group_name,
@@ -84,7 +79,6 @@ class SyncView(APIView):
                     'updated_at': group.updated_at.isoformat()
                 })
                 
-                # Members
                 for member in group.members.filter(is_active=True):
                     response_data['members'].append({
                         'id': str(member.id),
@@ -97,7 +91,6 @@ class SyncView(APIView):
                         'updated_at': member.updated_at.isoformat()
                     })
                 
-                # Loans
                 for loan in group.loans.filter(status__in=['active', 'approved']):
                     response_data['loans'].append({
                         'id': str(loan.id),
@@ -111,7 +104,6 @@ class SyncView(APIView):
                         'created_at': loan.created_at.isoformat()
                     })
                 
-                # Loan Repayments
                 for repayment in LoanRepayment.objects.filter(loan__group=group):
                     response_data['repayments'].append({
                         'id': str(repayment.id),
@@ -124,7 +116,6 @@ class SyncView(APIView):
                         'payment_method': repayment.payment_method
                     })
                 
-                # ✅ FIX: Only process shares if Share model exists
                 if Share is not None:
                     for share in Share.objects.filter(group=group):
                         response_data['shares'].append({
@@ -135,7 +126,6 @@ class SyncView(APIView):
                             'transaction_date': share.transaction_date.isoformat()
                         })
                 
-                # Attendance
                 for attendance in Attendance.objects.filter(group=group):
                     response_data['attendance'].append({
                         'id': str(attendance.id),
@@ -147,7 +137,6 @@ class SyncView(APIView):
                         'time_out': attendance.time_out.isoformat() if attendance.time_out else None
                     })
                 
-                # Attendance Cases
                 for case in AttendanceCase.objects.filter(group=group):
                     response_data['attendance_cases'].append({
                         'id': str(case.id),
@@ -161,12 +150,10 @@ class SyncView(APIView):
                         'penalty_due_date': case.penalty_due_date.isoformat() if case.penalty_due_date else None
                     })
             
-            # Update device sync
             device.last_sync_at = timezone.now()
             device.total_syncs += 1
             device.save()
             
-            # Log sync
             SyncLog.objects.create(
                 user=user,
                 device=device,
@@ -212,14 +199,13 @@ class SyncView(APIView):
                 'errors': []
             }
             
-            # Process different entity types
             entity_handlers = {
                 'members': self.process_member_sync,
                 'attendance': self.process_attendance_sync,
                 'attendance_cases': self.process_attendance_case_sync,
                 'loans': self.process_loan_sync,
                 'repayments': self.process_repayment_sync,
-                'shares': self.process_share_sync if Share is not None else None,
+                'share': self.process_share_sync if Share is not None else None,
             }
             
             for entity_type, handler in entity_handlers.items():
@@ -229,12 +215,10 @@ class SyncView(APIView):
                     results['updated'].extend(result['updated'])
                     results['errors'].extend(result['errors'])
             
-            # Update device sync
             device.last_sync_at = timezone.now()
             device.total_syncs += 1
             device.save()
             
-            # Log sync
             SyncLog.objects.create(
                 user=user,
                 device=device,
@@ -269,12 +253,9 @@ class SyncView(APIView):
         
         for member_data in members:
             try:
-                # Check if member exists
                 member = GroupMember.objects.filter(
                     id=member_data.get('id')
                 ).first()
-                
-                # Validate group belongs to user
                 if member_data.get('group_id'):
                     group = Group.objects.filter(
                         Q(chairman=user) | Q(secretary=user),
@@ -288,7 +269,6 @@ class SyncView(APIView):
                         continue
                 
                 if member:
-                    # Update existing member
                     for key, value in member_data.items():
                         if key in ['id', 'group_id']:
                             continue
@@ -296,7 +276,6 @@ class SyncView(APIView):
                     member.save()
                     results['updated'].append(str(member.id))
                 else:
-                    # Create new member
                     member = GroupMember.objects.create(
                         **member_data
                     )
@@ -325,7 +304,6 @@ class SyncView(APIView):
                     attendance.save()
                     results['updated'].append(str(attendance.id))
                 else:
-                    # Create new attendance
                     attendance = Attendance.objects.create(
                         **att_data
                     )
@@ -350,13 +328,11 @@ class SyncView(APIView):
                 ).first()
                 
                 if case:
-                    # Update existing case
                     case.status = case_data.get('status', case.status)
                     case.notes = case_data.get('notes', case.notes)
                     case.save()
                     results['updated'].append(str(case.id))
                 else:
-                    # Create new case
                     case = AttendanceCase.objects.create(
                         **case_data
                     )
@@ -385,7 +361,6 @@ class SyncView(APIView):
                     loan.save()
                     results['updated'].append(str(loan.id))
                 else:
-                    # Create new loan (pending approval)
                     loan = Loan.objects.create(
                         **loan_data,
                         status='pending'
@@ -413,7 +388,6 @@ class SyncView(APIView):
                 if repayment:
                     results['updated'].append(str(repayment.id))
                 else:
-                    # Create new repayment
                     repayment = LoanRepayment.objects.create(
                         **repayment_data
                     )
@@ -447,7 +421,6 @@ class SyncView(APIView):
                 if share:
                     results['updated'].append(str(share.id))
                 else:
-                    # Create new share
                     share = Share.objects.create(
                         **share_data
                     )
