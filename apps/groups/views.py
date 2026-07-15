@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 class GroupViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing groups"""
     serializer_class = GroupSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['is_active']
@@ -43,12 +42,7 @@ class GroupViewSet(viewsets.ModelViewSet):
             Q(members__user=user)
         ).distinct()
 
-    # ============================================================
-    # 🏠 GROUP CRUD OPERATIONS
-    # ============================================================
-
     def create(self, request):
-        """Create a new group"""
         serializer = GroupCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -56,7 +50,6 @@ class GroupViewSet(viewsets.ModelViewSet):
             group_name=serializer.validated_data['group_name'],
             address=serializer.validated_data.get('address', ''),
             chairman=request.user,
-            # ✅ New fields from serializer
             default_interest_rate=serializer.validated_data.get('default_interest_rate', 10.00),
             social_max_contribution=serializer.validated_data.get('social_max_contribution', 5000.00),
             savings_max_contribution=serializer.validated_data.get('savings_max_contribution', 10000.00),
@@ -68,7 +61,6 @@ class GroupViewSet(viewsets.ModelViewSet):
             meeting_day=serializer.validated_data.get('meeting_day', 'saturday')
         )
 
-        # Add chairman as member
         GroupMember.objects.create(
             group=group,
             user=request.user,
@@ -78,7 +70,6 @@ class GroupViewSet(viewsets.ModelViewSet):
             national_id='PENDING'
         )
 
-        # ✅ Auto-create loan settings with unified interest rate
         try:
             from apps.loans.models import LoanSettings
             LoanSettings.objects.create(
@@ -112,20 +103,14 @@ class GroupViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['put'])
     def update_group(self, request, pk=None):
-        """Update group details"""
         group = self.get_object()
         serializer = GroupUpdateSerializer(group, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(GroupSerializer(group).data)
 
-    # ============================================================
-    # 🔓 GROUP ACTIVATION
-    # ============================================================
-
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
-        """Activate a group and generate group code"""
         group = self.get_object()
         if group.is_active:
             return Response(
@@ -148,7 +133,6 @@ class GroupViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def disable(self, request, pk=None):
-        """Disable a group"""
         group = self.get_object()
         group.is_active = False
         group.save()
@@ -163,7 +147,6 @@ class GroupViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def regenerate_code(self, request, pk=None):
-        """Regenerate group code"""
         group = self.get_object()
         if not group.is_active:
             return Response(
@@ -180,13 +163,8 @@ class GroupViewSet(viewsets.ModelViewSet):
 
         return Response({'group_code': code})
 
-    # ============================================================
-    # 🔄 CYCLE MANAGEMENT
-    # ============================================================
-
     @action(detail=True, methods=['post'])
     def start_cycle(self, request, pk=None):
-        """Start a new group cycle"""
         group = self.get_object()
 
         if group.is_cycle_active:
@@ -206,8 +184,8 @@ class GroupViewSet(viewsets.ModelViewSet):
             details={
                 'group_id': str(group.id),
                 'group_name': group.group_name,
-                'start_date': result['start_date'].isoformat(),  # ← Convert to string
-                'end_date': result['end_date'].isoformat(),      # ← Convert to string
+                'start_date': result['start_date'].isoformat(),
+                'end_date': result['end_date'].isoformat(),
                 'duration_months': result['duration_months']
             }
         )
@@ -219,7 +197,6 @@ class GroupViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def end_cycle(self, request, pk=None):
-        """End the current group cycle"""
         group = self.get_object()
 
         if not group.is_cycle_active:
@@ -243,7 +220,6 @@ class GroupViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def cycle_status(self, request, pk=None):
-        """Get current cycle status and progress"""
         group = self.get_object()
 
         progress = group.get_cycle_progress()
@@ -266,13 +242,8 @@ class GroupViewSet(viewsets.ModelViewSet):
             }
         })
 
-    # ============================================================
-    # 👥 MEMBER MANAGEMENT
-    # ============================================================
-
     @action(detail=True, methods=['post'])
     def add_member(self, request, pk=None):
-        """Add a member to the group with SMS notification"""
         group = self.get_object()
         if not group.is_active:
             return Response(
@@ -283,7 +254,6 @@ class GroupViewSet(viewsets.ModelViewSet):
         serializer = GroupMemberCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Check if member already exists in group
         if GroupMember.objects.filter(
             group=group,
             phone_number=serializer.validated_data['phone_number']
@@ -298,7 +268,6 @@ class GroupViewSet(viewsets.ModelViewSet):
             **serializer.validated_data
         )
 
-        # Send SMS notification to the new member
         try:
             from apps.notifications.services import NotificationService
             notification = NotificationService()
@@ -321,10 +290,17 @@ Dial *123# to access your group.
 
         return Response(GroupMemberSerializer(member).data, status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=['put'], url_path='members/(?P<member_id>[^/.]+)')
-    def update_member(self, request, pk=None, member_id=None):
-        """Update a member's details"""
+    @action(detail=True, methods=['put', 'patch'])
+    def update_member(self, request, pk=None):
         group = self.get_object()
+        member_id = request.query_params.get('member_id')
+
+        if not member_id:
+            return Response(
+                {'error': 'member_id is required as query parameter'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         member = get_object_or_404(GroupMember, id=member_id, group=group)
 
         serializer = GroupMemberUpdateSerializer(member, data=request.data, partial=True)
@@ -335,20 +311,16 @@ Dial *123# to access your group.
 
     @action(detail=True, methods=['delete'], url_path='members/(?P<member_id>[^/.]+)')
     def remove_member(self, request, pk=None, member_id=None):
-        """Remove a member from the group with SMS notification"""
         group = self.get_object()
         member = get_object_or_404(GroupMember, id=member_id, group=group)
 
-        # Store member info before deactivating
         member_name = member.full_name
         member_phone = member.phone_number
         user = member.user
 
-        # Deactivate member
         member.is_active = False
         member.save()
 
-        # Send SMS notification to the removed member
         try:
             from apps.notifications.services import NotificationService
             notification = NotificationService()
@@ -363,7 +335,6 @@ Please contact your group chairman for more information.
             else:
                 notification.send_direct_sms(member_phone, sms_message)
 
-            # Notify chairman
             if group.chairman:
                 notification.send_notification(
                     group.chairman,
@@ -392,19 +363,13 @@ Please contact your group chairman for more information.
 
     @action(detail=True, methods=['get'])
     def members(self, request, pk=None):
-        """List all active members in the group"""
         group = self.get_object()
         members = group.members.filter(is_active=True)
         serializer = GroupMemberSerializer(members, many=True)
         return Response(serializer.data)
 
-    # ============================================================
-    # 🏦 BANK ACCOUNT MANAGEMENT
-    # ============================================================
-
     @action(detail=True, methods=['put', 'patch'])
     def update_bank_account(self, request, pk=None):
-        """Update group bank account details. Only chairman or admin can update."""
         group = self.get_object()
 
         if request.user.role not in ['chairman', 'admin']:
@@ -442,7 +407,6 @@ Please contact your group chairman for more information.
 
     @action(detail=True, methods=['get'])
     def get_bank_account(self, request, pk=None):
-        """Get group bank account details."""
         group = self.get_object()
 
         if request.user.role not in ['admin', 'chairman', 'secretary', 'treasurer']:
@@ -456,7 +420,6 @@ Please contact your group chairman for more information.
 
     @action(detail=True, methods=['post'])
     def verify_bank_account(self, request, pk=None):
-        """Verify bank account details (simulated verification)."""
         group = self.get_object()
 
         if request.user.role not in ['chairman', 'admin']:
@@ -494,13 +457,8 @@ Please contact your group chairman for more information.
 
         return Response(verification_status)
 
-    # ============================================================
-    # 📱 MOBILE MONEY MANAGEMENT
-    # ============================================================
-
     @action(detail=True, methods=['post'])
     def update_mobile_money(self, request, pk=None):
-        """Update group mobile money details."""
         group = self.get_object()
 
         if request.user.role not in ['chairman', 'admin', 'treasurer']:
@@ -539,7 +497,6 @@ Please contact your group chairman for more information.
 
     @action(detail=True, methods=['get'])
     def get_mobile_money(self, request, pk=None):
-        """Get group mobile money details."""
         group = self.get_object()
 
         if request.user.role not in ['admin', 'chairman', 'secretary', 'treasurer']:
@@ -554,13 +511,8 @@ Please contact your group chairman for more information.
             'has_mobile_money': bool(group.mobile_money_number)
         })
 
-    # ============================================================
-    # 🌐 ECORET ACCOUNT MANAGEMENT
-    # ============================================================
-
     @action(detail=True, methods=['put'])
     def update_ecoret_account(self, request, pk=None):
-        """Update ECORET account details. Only ECORET admin can update."""
         group = self.get_object()
 
         if request.user.role != 'admin':
@@ -603,7 +555,6 @@ Please contact your group chairman for more information.
 
     @action(detail=True, methods=['get'])
     def get_ecoret_account(self, request, pk=None):
-        """Get ECORET account details for the group."""
         group = self.get_object()
 
         if request.user.role not in ['admin', 'chairman']:
@@ -620,13 +571,8 @@ Please contact your group chairman for more information.
             'has_ecoret_account': bool(group.ecoret_account_id)
         })
 
-    # ============================================================
-    # 💰 LIMITS MANAGEMENT
-    # ============================================================
-
     @action(detail=True, methods=['put'])
     def update_limits(self, request, pk=None):
-        """Update group transaction limits. Only chairman or admin can update."""
         group = self.get_object()
 
         if request.user.role not in ['chairman', 'admin']:
@@ -663,7 +609,6 @@ Please contact your group chairman for more information.
 
     @action(detail=True, methods=['get'])
     def get_limits(self, request, pk=None):
-        """Get group transaction limits."""
         group = self.get_object()
 
         return Response({
@@ -671,13 +616,8 @@ Please contact your group chairman for more information.
             'max_loan_amount': group.max_loan_amount
         })
 
-    # ============================================================
-    # 📊 STATISTICS & RECORDS
-    # ============================================================
-
     @action(detail=True, methods=['get'])
     def statistics(self, request, pk=None):
-        """Get group statistics"""
         group = self.get_object()
 
         total_members = group.members.filter(is_active=True).count()
@@ -696,7 +636,6 @@ Please contact your group chairman for more information.
 
     @action(detail=True, methods=['post'])
     def upload_record(self, request, pk=None):
-        """Upload a record/document for the group"""
         group = self.get_object()
         serializer = GroupRecordCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -711,7 +650,6 @@ Please contact your group chairman for more information.
 
     @action(detail=True, methods=['get'])
     def records(self, request, pk=None):
-        """List all records for the group"""
         group = self.get_object()
         records = group.records.all()
         serializer = GroupRecordSerializer(records, many=True)
