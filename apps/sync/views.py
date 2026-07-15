@@ -8,13 +8,7 @@ import logging
 from .serializers import DeviceSyncSerializer
 from apps.groups.models import Group, GroupMember
 from apps.loans.models import Loan, LoanRepayment
-
-try:
-    from apps.shares.models import Share
-except ImportError:
-    Share = None
-    logger.warning("Shares app not found. Share sync disabled.")
-
+from apps.savings.models import Saving
 from apps.attendance.models import Attendance, AttendanceCase
 from .models import DeviceSync, SyncLog
 
@@ -22,15 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 class SyncView(APIView):
-    """
-    📱 Sync data between mobile app and server
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """
-        📥 Download data for offline use
-        """
         user = request.user
         device_id = request.query_params.get('device_id')
         
@@ -116,15 +104,14 @@ class SyncView(APIView):
                         'payment_method': repayment.payment_method
                     })
                 
-                if Share is not None:
-                    for share in Share.objects.filter(group=group):
-                        response_data['shares'].append({
-                            'id': str(share.id),
-                            'member_id': str(share.member.id),
-                            'amount': str(share.amount),
-                            'transaction_type': share.transaction_type,
-                            'transaction_date': share.transaction_date.isoformat()
-                        })
+                for saving in Saving.objects.filter(group=group):
+                    response_data['savings'].append({
+                        'id': str(saving.id),
+                        'member_id': str(saving.member.id),
+                        'amount': str(saving.amount),
+                        'transaction_type': saving.transaction_type,
+                        'transaction_date': saving.transaction_date.isoformat()
+                    })
                 
                 for attendance in Attendance.objects.filter(group=group):
                     response_data['attendance'].append({
@@ -177,9 +164,6 @@ class SyncView(APIView):
             )
 
     def post(self, request):
-        """
-        📤 Upload offline changes from mobile app
-        """
         user = request.user
         data = request.data
         device_id = request.data.get('device_id')
@@ -205,7 +189,7 @@ class SyncView(APIView):
                 'attendance_cases': self.process_attendance_case_sync,
                 'loans': self.process_loan_sync,
                 'repayments': self.process_repayment_sync,
-                'share': self.process_share_sync if Share is not None else None,
+                'savings': self.process_savings_sync,
             }
             
             for entity_type, handler in entity_handlers.items():
@@ -248,7 +232,6 @@ class SyncView(APIView):
             )
 
     def process_member_sync(self, user, members):
-        """Process member data from offline"""
         results = {'created': [], 'updated': [], 'errors': []}
         
         for member_data in members:
@@ -256,6 +239,7 @@ class SyncView(APIView):
                 member = GroupMember.objects.filter(
                     id=member_data.get('id')
                 ).first()
+                
                 if member_data.get('group_id'):
                     group = Group.objects.filter(
                         Q(chairman=user) | Q(secretary=user),
@@ -290,7 +274,6 @@ class SyncView(APIView):
         return results
 
     def process_attendance_sync(self, user, attendance_records):
-        """Process attendance data from offline"""
         results = {'created': [], 'updated': [], 'errors': []}
         
         for att_data in attendance_records:
@@ -318,7 +301,6 @@ class SyncView(APIView):
         return results
 
     def process_attendance_case_sync(self, user, cases):
-        """Process attendance cases from offline"""
         results = {'created': [], 'updated': [], 'errors': []}
         
         for case_data in cases:
@@ -347,7 +329,6 @@ class SyncView(APIView):
         return results
 
     def process_loan_sync(self, user, loans):
-        """Process loan data from offline"""
         results = {'created': [], 'updated': [], 'errors': []}
         
         for loan_data in loans:
@@ -376,7 +357,6 @@ class SyncView(APIView):
         return results
 
     def process_repayment_sync(self, user, repayments):
-        """Process repayment data from offline"""
         results = {'created': [], 'updated': [], 'errors': []}
         
         for repayment_data in repayments:
@@ -401,34 +381,26 @@ class SyncView(APIView):
         
         return results
 
-    def process_share_sync(self, user, shares):
-        """Process share data from offline"""
+    def process_savings_sync(self, user, savings_data):
         results = {'created': [], 'updated': [], 'errors': []}
         
-        if Share is None:
-            results['errors'].append({
-                'id': 'all',
-                'error': 'Shares app not available'
-            })
-            return results
-        
-        for share_data in shares:
+        for saving_data in savings_data:
             try:
-                share = Share.objects.filter(
-                    id=share_data.get('id')
+                saving = Saving.objects.filter(
+                    id=saving_data.get('id')
                 ).first()
                 
-                if share:
-                    results['updated'].append(str(share.id))
+                if saving:
+                    results['updated'].append(str(saving.id))
                 else:
-                    share = Share.objects.create(
-                        **share_data
+                    saving = Saving.objects.create(
+                        **saving_data
                     )
-                    results['created'].append(str(share.id))
+                    results['created'].append(str(saving.id))
                     
             except Exception as e:
                 results['errors'].append({
-                    'id': share_data.get('id'),
+                    'id': saving_data.get('id'),
                     'error': str(e)
                 })
         
@@ -436,9 +408,6 @@ class SyncView(APIView):
 
 
 class SyncStatusView(APIView):
-    """
-    📊 Get sync status for a device
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):

@@ -20,7 +20,6 @@ class LoanRequestAdmin(admin.ModelAdmin):
     list_filter = ['status']
     search_fields = ['group__group_name', 'purpose']
 
-# ✅ UPDATED: LoanSettingsAdmin with new dynamic fields
 @admin.register(LoanSettings)
 class LoanSettingsAdmin(admin.ModelAdmin):
     list_display = [
@@ -65,7 +64,6 @@ class LoanSettingsAdmin(admin.ModelAdmin):
         })
     )
 
-# ✅ NEW: ECORETSettings Admin
 @admin.register(ECORETSettings)
 class ECORETSettingsAdmin(admin.ModelAdmin):
     list_display = [
