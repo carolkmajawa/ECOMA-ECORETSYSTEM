@@ -290,6 +290,24 @@ class GroupMember(models.Model):
     joined_date = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # ==================== BANK DETAILS (for member to receive money) ====================
+    bank_name = models.CharField(max_length=100, blank=True, null=True)
+    bank_account_name = models.CharField(max_length=200, blank=True, null=True)
+    bank_account_number = models.CharField(max_length=50, blank=True, null=True)
+    bank_branch = models.CharField(max_length=100, blank=True, null=True)
+    
+    # ==================== MOBILE MONEY DETAILS (for member to receive money) ====================
+    mobile_money_provider = models.CharField(
+        max_length=20,
+        choices=(
+            ('airtel', 'Airtel Money'),
+            ('tnm', 'TNM Mpamba'),
+        ),
+        blank=True,
+        null=True
+    )
+    mobile_money_number = models.CharField(max_length=15, blank=True, null=True)
+
     class Meta:
         db_table = 'group_members'
         ordering = ['full_name']
@@ -315,7 +333,24 @@ class GroupMember(models.Model):
         attended = self.attendances.filter(attended=True).count()
         return (attended / total_meetings) * 100
 
-
+    def has_bank_details(self):
+        """Check if member has bank details"""
+        return bool(self.bank_account_number)
+    
+    def has_mobile_money(self):
+        """Check if member has mobile money"""
+        return bool(self.mobile_money_number)
+    
+    def get_disbursement_options(self):
+        """Get available disbursement methods for this member"""
+        options = []
+        if self.has_bank_details():
+            options.append('bank_transfer')
+        if self.has_mobile_money():
+            options.append('mobile_money')
+        options.append('cash')  # Cash is always available
+        return options
+    
 class GroupRecord(models.Model):
     RECORD_TYPES = [
         ('meeting_minutes', 'Meeting Minutes'),

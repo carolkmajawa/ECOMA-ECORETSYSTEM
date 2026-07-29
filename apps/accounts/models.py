@@ -40,6 +40,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         validators=[RegexValidator(r'^\+?[0-9]{10,15}$')],
         db_index=True
     )
+    gender = models.CharField(max_length=1, choices=[('M', 'Male'), ('F', 'Female')], blank=True, null=True)
+    date_of_birth = models.DateField(blank=True, null=True)  # <-- ADD THIS
+    national_id = models.CharField(max_length=50, blank=True, null=True)  # <-- ADD THIS
+    profile_picture = models.ImageField(upload_to='profiles/', blank=True, null=True) 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='member')
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
