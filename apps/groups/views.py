@@ -162,7 +162,7 @@ class GroupViewSet(viewsets.ModelViewSet):
                 break
 
         return Response({'group_code': code})
-
+    
     @action(detail=True, methods=['post'])
     def start_cycle(self, request, pk=None):
         group = self.get_object()
@@ -646,11 +646,51 @@ Please contact your group chairman for more information.
             **serializer.validated_data
         )
 
-        return Response(GroupRecordSerializer(record).data, status=status.HTTP_201_CREATED)
-
+        return Response(
+        GroupRecordSerializer(record, context={'request': request}).data,
+        status=status.HTTP_201_CREATED
+    )
+    
     @action(detail=True, methods=['get'])
     def records(self, request, pk=None):
         group = self.get_object()
         records = group.records.all()
-        serializer = GroupRecordSerializer(records, many=True)
+        serializer = GroupRecordSerializer(records, many=True, context={'request': request})
         return Response(serializer.data)
+    
+    # @action(detail=True, methods=['post'])
+    # def send_notification(self, request, pk=None):
+    #     group = self.get_object()
+    #     title = request.data.get('title')
+    #     message = request.data.get('message')
+
+    #     if not title or not message:
+    #         return Response(
+    #             {'error': 'title and message are required'},
+    #             status=status.HTTP_400_BAD_REQUEST
+    #         )
+
+    #     from apps.notifications.services import NotificationService
+    #     notification = NotificationService()
+
+    #     sent_count = 0
+    #     for member in group.members.filter(is_active=True):
+    #         try:
+    #             if member.user:
+    #                 notification.send_notification(member.user, title, message, 'group_notice')
+    #             else:
+    #                 notification.send_direct_sms(member.phone_number, f"{title}\n{message}")
+    #             sent_count += 1
+    #         except Exception as e:
+    #             logger.error(f"Failed to notify {member.full_name}: {str(e)}")
+
+    #     UserActivityLog.objects.create(
+    #         user=request.user,
+    #         action='send_group_notification',
+    #         details={'group_id': str(group.id), 'title': title, 'recipients': sent_count}
+    #     )
+
+    #     return Response({
+    #         'message': f'Notification sent to {sent_count} member(s)',
+    #         'sent_count': sent_count
+    #     })
