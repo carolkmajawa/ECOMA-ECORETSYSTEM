@@ -75,6 +75,12 @@
 #                        status=status.HTTP_201_CREATED)
     
     
+
+
+
+
+
+
 # apps/notifications/views.py
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.response import Response
@@ -236,8 +242,9 @@ class SendNotificationView(APIView):
         message = request.data.get('message')
         notification_type = request.data.get('notification_type', 'email')
         notification_category = request.data.get('category', 'group_notice')
-        
-        # Validate input
+        member_ids = request.data.get('member_ids', [])
+        recipient_type = request.data.get('recipient_type', 'all')
+
         if not group_id:
             return Response(
                 {'error': 'group_id is required'},
@@ -265,15 +272,18 @@ class SendNotificationView(APIView):
                 {'error': 'You do not have permission to send notifications to this group'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
+        members_qs = group.members.filter(is_active=True)
+        if recipient_type == 'selected' and member_ids:
+            members_qs = members_qs.filter(id__in=member_ids)
+
         try:
             service = NotificationService()
-            
-            # Send to all active members
+
             sent_count = 0
             failed_count = 0
-            
-            for member in group.members.filter(is_active=True):
+
+            for member in members_qs:
                 try:
                     member_user = member.user
                     

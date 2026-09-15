@@ -163,15 +163,25 @@
 #         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
+
+
+
+
+
+
 # apps/loans/serializers.py
 from rest_framework import serializers
 from django.utils import timezone
+from django.db.models import Sum
 from decimal import Decimal
+import logging
+from apps.groups.models import GroupMember
 from .models import (
     Loan, LoanRepayment, LoanRequest, LoanSettings, 
     ECORETSettings, ECORETBankAccount
 )
 import json
+logger = logging.getLogger(__name__)
 
 
 # ==================== ECORET BANK ACCOUNT SERIALIZER ====================
@@ -198,13 +208,110 @@ class ECORETBankAccountSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-# ==================== LOAN SERIALIZERS ====================
+# ==================== LOAN REPAYMENT SERIALIZER (MOVED UP) ====================
+
+class LoanRepaymentSerializer(serializers.ModelSerializer):
+    """Serializer for loan repayments"""
+    member_name = serializers.CharField(source='member.full_name', read_only=True)
+    
+    class Meta:
+        model = LoanRepayment
+        fields = [
+            'id', 'loan', 'member', 'member_name',
+            'amount', 'principal_paid', 'interest_paid', 
+            'payment_method', 'transaction_reference', 'notes',
+            'payment_date', 'recorded_by','recorded_at'
+        ]
+        read_only_fields = ['id', 'payment_date', 'recorded_at']
+
+# ==================== LOAN REPAYMENT CREATE SERIALIZER ====================
+
+class LoanRepaymentCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating loan repayments"""
+    
+    class Meta:
+        model = LoanRepayment
+        fields = [
+            'id', 'loan', 'amount', 'payment_method',
+            'transaction_reference', 'notes'
+        ]
+    
+    def validate(self, data):
+        """Validate the repayment data"""
+        loan = self.context.get('loan')
+        if not loan:
+            raise serializers.ValidationError("Loan context is required")
+        
+        amount = data.get('amount', 0)
+        
+        # Check if loan is active or approved
+        if loan.status not in ['active', 'approved']:
+            raise serializers.ValidationError(
+                f"Cannot make repayment on this loan. Current status: {loan.status}"
+            )
+        
+        # Check if amount is positive
+        if amount <= 0:
+            raise serializers.ValidationError("Repayment amount must be greater than zero")
+        
+        # Check if amount exceeds balance
+        balance = loan.get_balance()
+        if amount > balance:
+            raise serializers.ValidationError(
+                f"Amount exceeds balance. Balance: {balance}"
+            )
+        
+        return data
+    
+    def create(self, validated_data):
+        """Create the repayment with calculated principal and interest"""
+        loan = self.context.get('loan')
+        request = self.context.get('request')
+        amount = validated_data.get('amount', 0)
+        
+        # Calculate total paid and remaining
+        total_paid = loan.repayments.aggregate(total=Sum('amount'))['total'] or 0
+        remaining_principal = loan.total_payable - total_paid
+        
+        # Split between principal and interest
+        if amount <= remaining_principal:
+            principal_paid = amount
+            interest_paid = 0
+        else:
+            principal_paid = remaining_principal
+            interest_paid = amount - remaining_principal
+        
+        # Create the repayment
+        repayment = LoanRepayment.objects.create(
+            loan=loan,
+            member=loan.member,
+            recorded_by=request.user if request else None,
+            amount=amount,
+            principal_paid=principal_paid,
+            interest_paid=interest_paid,
+            payment_method=validated_data.get('payment_method', 'cash'),
+            transaction_reference=validated_data.get('transaction_reference', ''),
+            notes=validated_data.get('notes', ''),
+            payment_date=timezone.now()
+        )
+        
+        # Auto-update loan status if fully paid
+        if loan.get_balance() <= 0:
+            loan.status = 'completed'
+            loan.save()
+            logger.info(f"✅ Loan {loan.id} automatically marked as completed")
+        
+        return repayment
+
+
+# ==================== LOAN SERIALIZER ====================
 
 class LoanSerializer(serializers.ModelSerializer):
     member_name = serializers.CharField(source='member.full_name', read_only=True)
     group_name = serializers.CharField(source='group.group_name', read_only=True)
     balance = serializers.SerializerMethodField()
     total_paid = serializers.SerializerMethodField()
+    repayments = LoanRepaymentSerializer(many=True, read_only=True, source='repayment_set')
     
     # ECORET Disbursement Fields
     disbursement_method_display = serializers.CharField(
@@ -258,6 +365,9 @@ class LoanSerializer(serializers.ModelSerializer):
             'disbursed_by_chairman_name', 'chairman_cash_receipt',
             'chairman_transfer_reference', 'chairman_mobile_money_reference',
             'chairman_mobile_money_provider', 'chairman_disbursement_notes',
+            
+            # Repayments
+            'repayments',
         ]
         read_only_fields = ['id', 'request_date', 'created_at', 'updated_at']
     
@@ -363,7 +473,7 @@ class LoanDisbursementSerializer(serializers.Serializer):
         choices=['cash', 'bank_transfer', 'wait']
     )
     bank_account_id = serializers.UUIDField(required=False, allow_null=True)
-    pin = serializers.CharField(required=False, allow_blank=True, max_length=4)
+    pin = serializers.CharField(required=False, allow_blank=True, max_length=128)
     receipt_number = serializers.CharField(required=False, allow_blank=True)
     transfer_reference = serializers.CharField(required=False, allow_blank=True)
     reason = serializers.CharField(required=False, allow_blank=True)
@@ -399,8 +509,6 @@ class LoanDisbursementSerializer(serializers.Serializer):
         
         return data
 
-
-# ==================== CHAIRMAN DISBURSEMENT SERIALIZER ====================
 
 class ChairmanDisbursementSerializer(serializers.Serializer):
     """
@@ -447,79 +555,46 @@ class ChairmanDisbursementSerializer(serializers.Serializer):
         return data
 
 
-# ==================== LOAN REPAYMENT SERIALIZERS ====================
-
-class LoanRepaymentSerializer(serializers.ModelSerializer):
-    member_name = serializers.CharField(source='member.full_name', read_only=True)
-    recorded_by_name = serializers.CharField(source='recorded_by.get_full_name', read_only=True)
-    
-    class Meta:
-        model = LoanRepayment
-        fields = [
-            'id', 'loan', 'member', 'member_name', 'amount', 
-            'principal_paid', 'interest_paid', 'payment_date', 
-            'payment_method', 'transaction_reference', 'recorded_by',
-            'recorded_by_name', 'notes'
-        ]
-        read_only_fields = ['id', 'payment_date']
-
-
-class LoanRepaymentCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LoanRepayment
-        fields = ['amount', 'payment_method', 'transaction_reference', 'notes']
-    
-    def validate(self, data):
-        amount = data.get('amount')
-        if not isinstance(amount, Decimal):
-            try:
-                amount = Decimal(str(amount))
-            except:
-                raise serializers.ValidationError({'amount': 'Invalid amount format'})
-        if amount <= 0:
-            raise serializers.ValidationError({'amount': 'Amount must be greater than 0'})
-        return data
-
-
 # ==================== LOAN REQUEST SERIALIZERS ====================
 
 class LoanRequestSerializer(serializers.ModelSerializer):
     group_name = serializers.CharField(source='group.group_name', read_only=True)
     requested_by_name = serializers.CharField(source='requested_by.get_full_name', read_only=True)
-    
+
     class Meta:
         model = LoanRequest
         fields = [
             'id', 'group', 'group_name', 'requested_by', 'requested_by_name',
-            'amount', 'purpose', 'status', 'request_date', 'approval_date',
-            'notes', 'attachments', 'admin_notes', 'created_at', 'updated_at'
+            'amount', 'approved_amount', 'purpose', 'status', 'request_date', 'approval_date',
+            'notes', 'attachments', 'document', 'admin_notes', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'request_date', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'request_date', 'created_at', 'updated_at', 'approved_amount']
 
 
 class LoanRequestCreateSerializer(serializers.ModelSerializer):
     attachments = serializers.JSONField(required=False, allow_null=True, default=list)
-    
+    document = serializers.FileField(required=False, allow_null=True)
+
     class Meta:
         model = LoanRequest
-        fields = ['amount', 'purpose', 'notes', 'attachments']
-    
+        fields = ['amount', 'purpose', 'notes', 'attachments', 'document']
+
     def validate_attachments(self, value):
         """Validate attachments field to handle various input formats"""
         if value is None:
             return []
-        
+
         if isinstance(value, str):
             try:
                 value = json.loads(value)
             except json.JSONDecodeError:
                 raise serializers.ValidationError("Invalid JSON format for attachments")
-        
+
         if not isinstance(value, list):
             raise serializers.ValidationError("Attachments must be a JSON array")
-        
+
         return value
-    
+
     def validate(self, data):
         amount = data.get('amount', 0)
         if not isinstance(amount, Decimal):
@@ -530,7 +605,6 @@ class LoanRequestCreateSerializer(serializers.ModelSerializer):
         if amount <= 0:
             raise serializers.ValidationError({'amount': 'Amount must be greater than 0'})
         return data
-
 
 # ==================== LOAN SETTINGS SERIALIZERS ====================
 
@@ -556,6 +630,9 @@ class LoanSettingsSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+
+# ==================== ECORET SETTINGS SERIALIZER ====================
+
 class ECORETSettingsSerializer(serializers.ModelSerializer):
     updated_by_name = serializers.CharField(source='updated_by.get_full_name', read_only=True)
     
@@ -566,26 +643,5 @@ class ECORETSettingsSerializer(serializers.ModelSerializer):
             'ecoret_loan_max_amount', 'ecoret_loan_min_amount',
             'service_fee_percentage', 'updated_by', 'updated_by_name',
             'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
-class ECORETBankAccountSerializer(serializers.ModelSerializer):
-    account_type_display = serializers.CharField(
-        source='get_account_type_display', 
-        read_only=True
-    )
-    status_display = serializers.CharField(
-        source='get_status_display', 
-        read_only=True
-    )
-    
-    class Meta:
-        model = ECORETBankAccount
-        fields = [
-            'id', 'name', 'account_number', 'account_name', 'bank_name',
-            'bank_branch', 'bank_code', 'account_type', 'account_type_display',
-            'status', 'status_display', 'balance', 'currency',
-            'daily_limit', 'transaction_limit', 'is_default',
-            'paychangu_verified', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']

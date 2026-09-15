@@ -10,20 +10,29 @@ class Group(models.Model):
     group_name = models.CharField(max_length=255, db_index=True)
     group_code = models.CharField(max_length=20, unique=True, blank=True, null=True, db_index=True)
     chairman = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True,
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True,
         related_name='chairman_groups'
     )
     secretary = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True,
-        related_name='secretary_groups'
+        'GroupMember',  # Changed from User
+        on_delete=models.SET_NULL, 
+        null=True,
+        blank=True,
+        related_name='secretary_for_groups'
     )
     treasurer = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True,
-        related_name='treasurer_groups'
+        'GroupMember',  # Changed from User
+        on_delete=models.SET_NULL, 
+        null=True,
+        blank=True,
+        related_name='treasurer_for_groups'
     )
 
     bank_name = models.CharField(max_length=100, blank=True, null=True)
     bank_account_number = models.CharField(max_length=50, blank=True, null=True)
+    paychangu_bank_uuid = models.CharField(max_length=100, blank=True, null=True)
     billing_number = models.CharField(max_length=50, blank=True, null=True)
     bank_account_name = models.CharField(max_length=200, blank=True, null=True)
     bank_branch = models.CharField(max_length=100, blank=True, null=True)
@@ -229,6 +238,24 @@ class Group(models.Model):
 
         return 'No Cycle'
 
+    def generate_group_code(self):
+        """Generate a unique 6-digit group code"""
+        import random
+        import string
+        
+        # Generate a random 6-digit code
+        while True:
+            code = ''.join(random.choices(string.digits, k=6))
+            if not Group.objects.filter(group_code=code).exclude(id=self.id).exists():
+                self.group_code = code
+                break
+        return self.group_code
+    
+    def save(self, *args, **kwargs):
+        # Generate group code if not set
+        if not self.group_code:
+            self.generate_group_code()
+        super().save(*args, **kwargs)
 
 class GroupMember(models.Model):
     GENDER_CHOICES = [
@@ -294,6 +321,7 @@ class GroupMember(models.Model):
     bank_name = models.CharField(max_length=100, blank=True, null=True)
     bank_account_name = models.CharField(max_length=200, blank=True, null=True)
     bank_account_number = models.CharField(max_length=50, blank=True, null=True)
+    paychangu_bank_uuid = models.CharField(max_length=100, blank=True, null=True)
     bank_branch = models.CharField(max_length=100, blank=True, null=True)
     
     # ==================== MOBILE MONEY DETAILS (for member to receive money) ====================
@@ -308,6 +336,14 @@ class GroupMember(models.Model):
     )
     mobile_money_number = models.CharField(max_length=15, blank=True, null=True)
 
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='groups_created'
+    )
+    
     class Meta:
         db_table = 'group_members'
         ordering = ['full_name']
@@ -375,3 +411,142 @@ class GroupRecord(models.Model):
 
     def __str__(self):
         return f'{self.record_name} - {self.group.group_name}'
+
+  # apps/groups/models.py - Add at the bottom
+
+# apps/groups/models.py - ADD THIS AT THE BOTTOM
+
+class LedgerEntry(models.Model):
+    """Model for tracking all financial transactions in a group"""
+    
+    TRANSACTION_TYPES = [
+        ('savings_contribution', 'Savings Contribution'),
+        ('social_contribution', 'Social Contribution'),
+        ('loan_disbursement', 'Loan Disbursement'),
+        ('loan_repayment', 'Loan Repayment'),
+        ('loan_interest', 'Loan Interest'),
+        ('late_fee', 'Late Fee'),
+        ('meeting_fine', 'Meeting Fine'),
+        ('expense', 'Group Expense'),
+        ('income', 'Group Income'),
+        ('transfer', 'Transfer'),
+        ('refund', 'Refund'),
+        ('withdrawal', 'Withdrawal'),
+        ('deposit', 'Deposit'),
+    ]
+    
+    TRANSACTION_CATEGORIES = [
+        ('savings', 'Savings'),
+        ('loans', 'Loans'),
+        ('social', 'Social Fund'),
+        ('operational', 'Operational'),
+        ('fines', 'Fines'),
+        ('other', 'Other'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='ledger_entries')
+    
+    transaction_type = models.CharField(max_length=50, choices=TRANSACTION_TYPES)
+    category = models.CharField(max_length=50, choices=TRANSACTION_CATEGORIES, default='other')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    balance = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Running balance after this transaction")
+    
+    member = models.ForeignKey(GroupMember, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    loan = models.ForeignKey('loans.Loan', on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    
+    description = models.TextField(blank=True, null=True)
+    reference_number = models.CharField(max_length=100, blank=True, null=True)
+    
+    recorded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='recorded_ledger_entries')
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    is_verified = models.BooleanField(default=False)
+    verified_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='verified_ledger_entries')
+    verified_at = models.DateTimeField(null=True, blank=True)
+    
+    is_auto_generated = models.BooleanField(default=False)
+    source_model = models.CharField(max_length=50, blank=True, null=True)
+    source_id = models.UUIDField(null=True, blank=True)
+    
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='deleted_ledger_entries')
+    
+    class Meta:
+        db_table = 'ledger_entries'
+        ordering = ['-recorded_at']
+        indexes = [
+            models.Index(fields=['group', 'transaction_type']),
+            models.Index(fields=['group', 'member']),
+            models.Index(fields=['group', 'recorded_at']),
+            models.Index(fields=['group', 'is_verified']),
+        ]
+    
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} - {self.amount} - {self.group.group_name}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-update balance if not provided
+        if not self.balance:
+            latest = LedgerEntry.objects.filter(
+                group=self.group,
+                is_deleted=False
+            ).exclude(id=self.id).order_by('-recorded_at').first()
+            
+            previous_balance = latest.balance if latest else 0
+            
+            # Credit increases balance, Debit decreases
+            credit_types = ['savings_contribution', 'social_contribution', 'loan_repayment', 'loan_interest', 'income', 'refund', 'deposit']
+            if self.transaction_type in credit_types:
+                self.balance = previous_balance + self.amount
+            else:
+                self.balance = previous_balance - self.amount
+        
+        super().save(*args, **kwargs)
+    
+    def soft_delete(self, user):
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.deleted_by = user
+        self.save()
+    
+    @classmethod
+    def get_balance(cls, group, as_of_date=None):
+        queryset = cls.objects.filter(group=group, is_deleted=False)
+        if as_of_date:
+            queryset = queryset.filter(recorded_at__date__lte=as_of_date)
+        
+        latest = queryset.order_by('-recorded_at').first()
+        return latest.balance if latest else 0
+    
+    @classmethod
+    def get_member_balance(cls, member, as_of_date=None):
+        queryset = cls.objects.filter(member=member, is_deleted=False)
+        if as_of_date:
+            queryset = queryset.filter(recorded_at__date__lte=as_of_date)
+        
+        latest = queryset.order_by('-recorded_at').first()
+        return latest.balance if latest else 0
+
+class LedgerCategory(models.Model):
+    """Model for custom ledger categories"""
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='ledger_categories')
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    color = models.CharField(max_length=7, default='#259BD8')
+    icon = models.CharField(max_length=50, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'ledger_categories'
+        ordering = ['name']
+        unique_together = ['group', 'name']
+    
+    def __str__(self):
+        return f"{self.name} - {self.group.group_name}"

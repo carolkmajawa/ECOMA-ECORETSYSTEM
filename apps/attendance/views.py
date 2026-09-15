@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
-from django.db.models import Q, Count, Avg
+from django.db.models import Q, Count, Avg,Sum
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
@@ -35,8 +35,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.role == 'admin':
             return Attendance.objects.all()
-        groups = user.chairman_groups.all() | user.secretary_groups.all()
-        return Attendance.objects.filter(group__in=groups)
+        chairman_groups = Group.objects.filter(chairman=user).values_list('id', flat=True)
+        secretary_groups = GroupMember.objects.filter(
+            user=user, is_active=True
+        ).values_list('group_id', flat=True)
+        all_group_ids = list(chairman_groups) + list(secretary_groups)
+        return Attendance.objects.filter(group__in=all_group_ids)
     
     def create(self, request):
         serializer = AttendanceCreateSerializer(data=request.data)
@@ -115,8 +119,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if user.role == 'admin':
             groups = Group.objects.filter(is_active=True)
         else:
-            groups = user.chairman_groups.all() | user.secretary_groups.all()
-        
+            chairman_groups = Group.objects.filter(chairman=user).values_list('id', flat=True)
+            secretary_groups = GroupMember.objects.filter(
+                user=user, is_active=True
+            ).values_list('group_id', flat=True)
+            all_group_ids = list(chairman_groups) + list(secretary_groups)
+            groups = Group.objects.filter(id__in=all_group_ids, is_active=True)
         if not groups:
             return Response({'error': 'No groups found'}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -181,8 +189,12 @@ class MeetingViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.role == 'admin':
             return Meeting.objects.all()
-        groups = user.chairman_groups.all() | user.secretary_groups.all()
-        return Meeting.objects.filter(group__in=groups)
+        chairman_groups = Group.objects.filter(chairman=user).values_list('id', flat=True)
+        secretary_groups = GroupMember.objects.filter(
+            user=user, is_active=True
+        ).values_list('group_id', flat=True)
+        all_group_ids = list(chairman_groups) + list(secretary_groups)
+        return Meeting.objects.filter(group__in=all_group_ids   )
     
     def create(self, request):
         group = request.user.chairman_groups.first()
@@ -238,8 +250,12 @@ class ParticipationTrackingViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.role == 'admin':
             return ParticipationTracking.objects.all()
-        groups = user.chairman_groups.all() | user.secretary_groups.all()
-        return ParticipationTracking.objects.filter(member__group__in=groups)
+        chairman_groups = Group.objects.filter(chairman=user).values_list('id', flat=True)
+        secretary_groups = GroupMember.objects.filter(
+            user=user, is_active=True
+        ).values_list('group_id', flat=True)
+        all_group_ids = list(chairman_groups) + list(secretary_groups)
+        return ParticipationTracking.objects.filter(member__group__in=all_group_ids)
     
     @action(detail=False, methods=['get'], url_path='member/(?P<member_id>[^/.]+)')
     def member_stats(self, request, member_id=None):
@@ -249,7 +265,7 @@ class ParticipationTrackingViewSet(viewsets.ModelViewSet):
         participations = self.get_queryset().filter(member=member)
         total = participations.count()
         participated = participations.filter(participated=True).count()
-        total_points = participations.aggregate(total=sum('points'))['total'] or 0
+        total_points = participations.aggregate(total=Sum('points'))['total'] or 0
         
         return Response({
             'member': {
@@ -283,9 +299,13 @@ class AttendanceCaseViewSet(viewsets.ModelViewSet):
         if user.role == 'admin':
             return AttendanceCase.objects.all()
         
-        groups = user.chairman_groups.all() | user.secretary_groups.all()
-        return AttendanceCase.objects.filter(group__in=groups)
-    
+        chairman_groups = Group.objects.filter(chairman=user).values_list('id', flat=True)
+        secretary_groups = GroupMember.objects.filter(
+            user=user, is_active=True
+        ).values_list('group_id', flat=True)
+        all_group_ids = list(chairman_groups) + list(secretary_groups)
+        return AttendanceCase.objects.filter(group__in=all_group_ids)
+
     def create(self, request):
         """
         Create a new attendance case with penalty
@@ -432,8 +452,13 @@ class AttendanceCaseViewSet(viewsets.ModelViewSet):
         if user.role == 'admin':
             groups = Group.objects.filter(is_active=True)
         else:
-            groups = user.chairman_groups.all() | user.secretary_groups.all()
-        
+            chairman_groups = Group.objects.filter(chairman=user).values_list('id', flat=True)
+            secretary_groups = GroupMember.objects.filter(
+                user=user, is_active=True
+            ).values_list('group_id', flat=True)
+            all_group_ids = list(chairman_groups) + list(secretary_groups)
+            groups = Group.objects.filter(id__in=all_group_ids)
+
         if not groups:
             return Response({
                 'total_cases': 0,
@@ -450,8 +475,8 @@ class AttendanceCaseViewSet(viewsets.ModelViewSet):
         resolved_cases = cases.filter(status='resolved').count()
         waived_cases = cases.filter(status='waived').count()
         
-        total_penalties = cases.aggregate(total=sum('penalty_amount'))['total'] or 0
-        total_paid = cases.aggregate(total=sum('penalty_paid'))['total'] or 0
+        total_penalties = cases.aggregate(total=Sum('penalty_amount'))['total'] or 0
+        total_paid = cases.aggregate(total=Sum('penalty_paid'))['total'] or 0
         
         case_types = {}
         for case_type, label in AttendanceCase.CASE_TYPES:
@@ -478,8 +503,8 @@ class AttendanceCaseViewSet(viewsets.ModelViewSet):
         member = get_object_or_404(GroupMember, id=member_id)
         cases = self.get_queryset().filter(member=member)
         
-        total_penalty = cases.aggregate(total=sum('penalty_amount'))['total'] or 0
-        total_paid = cases.aggregate(total=sum('penalty_paid'))['total'] or 0
+        total_penalty = cases.aggregate(total=Sum('penalty_amount'))['total'] or 0
+        total_paid = cases.aggregate(total=Sum('penalty_paid'))['total'] or 0
         
         return Response({
             'member': {

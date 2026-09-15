@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from .models import User, UserDevice, UserActivityLog
+from .models import User, UserDevice, UserActivityLog, PasswordResetToken, AdminRequest
 from django.utils import timezone
 import os
 from PIL import Image
@@ -193,3 +193,68 @@ class UserActivityLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserActivityLog
         fields = ['id', 'user', 'user_name', 'action', 'details', 'ip_address', 'created_at']
+
+
+class AdminRequestSerializer(serializers.ModelSerializer):
+    """Serializer for admin requests"""
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    reviewed_by_name = serializers.CharField(source='reviewed_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = AdminRequest
+        fields = [
+            'id', 'user', 'user_email', 'user_full_name', 
+            'full_name', 'email', 'phone_number', 'reason',
+            'status', 'reviewed_by', 'reviewed_by_name', 
+            'reviewed_at', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'reviewed_by', 
+            'reviewed_at', 'user_email', 'user_full_name', 'reviewed_by_name'
+        ]
+
+
+class AdminRequestCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating admin requests"""
+    
+    class Meta:
+        model = AdminRequest
+        fields = ['reason']
+    
+    def validate(self, data):
+        user = self.context.get('request').user
+        
+        # Check if user already has a pending request
+        if AdminRequest.objects.filter(user=user, status='pending').exists():
+            raise serializers.ValidationError(
+                {'error': 'You already have a pending admin request'}
+            )
+        
+        # Check if user already has an approved request
+        if AdminRequest.objects.filter(user=user, status='approved').exists():
+            raise serializers.ValidationError(
+                {'error': 'Your admin request has already been approved'}
+            )
+        
+        # Check if user is already an admin
+        if user.role == 'admin':
+            raise serializers.ValidationError(
+                {'error': 'You are already an administrator'}
+            )
+        
+        return data
+    
+    def create(self, validated_data):
+        user = self.context.get('request').user
+        
+        admin_request = AdminRequest.objects.create(
+            user=user,
+            full_name=user.get_full_name(),
+            email=user.email,
+            phone_number=user.phone_number,
+            reason=validated_data.get('reason', 'No reason provided'),
+            status='pending'
+        )
+        
+        return admin_request      

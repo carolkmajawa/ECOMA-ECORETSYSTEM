@@ -29,7 +29,8 @@ urlpatterns = [
     path('api/', include('apps.notifications.urls')),
     path('api/', include('apps.ussd.urls')),
     path('api/', include('apps.sync.urls')),
-    
+    path('api/payments/', include('apps.security.urls')),
+    path('api/', include('apps.reports.urls')),
     # Swagger documentation
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), 
          name='schema-swagger-ui'),

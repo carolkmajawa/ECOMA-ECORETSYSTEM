@@ -313,6 +313,9 @@
         
 #         return self.send_sms_notification(user, message)
 
+
+
+
 # apps/notifications/services.py
 import logging
 from django.core.mail import send_mail
@@ -320,19 +323,86 @@ from django.conf import settings
 from .models import Notification, NotificationQueue, NotificationPreference
 from apps.accounts.models import User
 from django.utils import timezone
+from apps.ussd.services import AfricaTalkingService
 
 logger = logging.getLogger(__name__)
 
 class NotificationService:
     """
-    Service class for sending notifications
+    Service class for sending notifications via multiple channels
     """
+    
+    def __init__(self):
+        self.sms_service = AfricaTalkingService()
+    
+    # ==================== SMS METHODS ====================
+    
+    def send_sms_to_user(self, user, message, sender_id=None):
+        """
+        Send SMS to a user object
+        """
+        if not user:
+            logger.warning("Cannot send SMS: User is None")
+            return {"status": "error", "message": "User is None"}
+        
+        try:
+            # Check if user has SMS notifications enabled
+            try:
+                prefs = NotificationPreference.objects.get(user=user)
+                if not prefs.sms_notifications:
+                    logger.info(f"SMS notifications disabled for {user.email}")
+                    return {"status": "skipped", "message": "SMS notifications disabled"}
+            except NotificationPreference.DoesNotExist:
+                pass
+            
+            if not user.phone_number:
+                logger.warning(f"No phone number for user {user.id}")
+                return {"status": "error", "message": "No phone number"}
+            
+            return self.send_direct_sms(user.phone_number, message, sender_id)
+            
+        except Exception as e:
+            logger.error(f"Failed to send SMS to {user.phone_number}: {str(e)}")
+            return {"status": "error", "message": str(e)}
+    
+    def send_direct_sms(self, phone_number, message, sender_id=None):
+        """
+        Send SMS directly to a phone number
+        """
+        if not phone_number:
+            logger.error("No phone number provided for SMS")
+            return {"status": "error", "message": "No phone number provided"}
+        
+        if not message:
+            logger.error("No message provided for SMS")
+            return {"status": "error", "message": "No message provided"}
+        
+        try:
+            # Send SMS using AfricaTalkingService
+            result = self.sms_service.send_sms(phone_number, message, sender_id)
+            
+            if result.get('status') == 'success':
+                logger.info(f"SMS sent successfully to {phone_number}")
+            else:
+                logger.warning(f"SMS sending issue to {phone_number}: {result.get('message')}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to send SMS to {phone_number}: {str(e)}")
+            return {"status": "error", "message": str(e)}
+    
+    # ==================== NOTIFICATION METHODS ====================
     
     def send_notification(self, user, title, message, notification_type='system', data=None):
         """
         Create a notification record for a user
         """
         try:
+            if not user:
+                logger.warning("Cannot create notification: User is None")
+                return None
+            
             notification = Notification.objects.create(
                 user=user,
                 title=title,
@@ -342,12 +412,17 @@ class NotificationService:
             )
             logger.info(f"Notification created for {user.email}: {title}")
             return notification
+            
         except Exception as e:
             logger.error(f"Failed to create notification: {str(e)}")
             return None
     
+    # ==================== EMAIL METHODS ====================
+    
     def send_email_notification(self, user, subject, message):
-        """Send email notification to a user"""
+        """
+        Send email notification to a user
+        """
         if not user:
             logger.warning("Cannot send email: User is None")
             return False
@@ -357,16 +432,16 @@ class NotificationService:
             try:
                 prefs = NotificationPreference.objects.get(user=user)
                 if not prefs.email_notifications:
-                    logger.info(f"📧 Email notifications disabled for {user.email}")
+                    logger.info(f"Email notifications disabled for {user.email}")
                     return False
             except NotificationPreference.DoesNotExist:
                 pass
             
             if not user.email:
-                logger.warning(f"❌ No email address for user {user.id}")
+                logger.warning(f"No email address for user {user.id}")
                 return False
             
-            # FIRST: Create notification record
+            # Create notification record
             notification = self.send_notification(
                 user=user,
                 title=subject,
@@ -375,7 +450,7 @@ class NotificationService:
             )
             
             if notification:
-                # THEN: Send email
+                # Send email
                 send_mail(
                     subject=f'[ECORET] {subject}',
                     message=message,
@@ -383,9 +458,9 @@ class NotificationService:
                     recipient_list=[user.email],
                     fail_silently=False,
                 )
-                logger.info(f"✅ Email sent to {user.email}: {subject}")
+                logger.info(f"Email sent to {user.email}: {subject}")
                 
-                # THEN: Log to queue with the notification
+                # Log to queue
                 self.log_to_queue(
                     notification=notification,
                     channel='email',
@@ -393,62 +468,21 @@ class NotificationService:
                 )
                 return True
             else:
-                logger.error(f"❌ Failed to create notification for {user.email}")
+                logger.error(f"Failed to create notification for {user.email}")
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ Failed to send email to {user.email}: {str(e)}")
-            # Try to log failed queue item if notification exists
-            if notification:
-                self.log_to_queue(
-                    notification=notification,
-                    channel='email',
-                    status='failed',
-                    error=str(e)
-                )
+            logger.error(f"Failed to send email to {user.email}: {str(e)}")
             return False
     
-    def send_sms_notification(self, user, message):
-        """
-        Send SMS notification to a user
-        """
-        try:
-            # Check if user has SMS notifications enabled
-            try:
-                prefs = NotificationPreference.objects.get(user=user)
-                if not prefs.sms_notifications:
-                    logger.info(f"SMS notifications disabled for {user.email}")
-                    return False
-            except NotificationPreference.DoesNotExist:
-                pass
-            
-            if user and user.phone_number:
-                return self.send_direct_sms(user.phone_number, message)
-        except Exception as e:
-            logger.error(f"Failed to send SMS to {user.phone_number}: {str(e)}")
-            return False
-    
-    def send_direct_sms(self, phone_number, message):
-        """
-        Send SMS directly to a phone number
-        """
-        try:
-            # Africa's Talking implementation
-            from apps.ussd.services import AfricaTalkingService
-            service = AfricaTalkingService()
-            result = service.send_sms(phone_number, message)
-            logger.info(f"SMS sent to {phone_number}")
-            return result
-        except Exception as e:
-            logger.error(f"Failed to send SMS to {phone_number}: {str(e)}")
-            return False
+    # ==================== QUEUE METHODS ====================
     
     def log_to_queue(self, notification, channel, status='pending', error=None):
         """
         Log notification to queue for tracking
         """
         if not notification:
-            logger.warning("⚠️ Cannot log to queue: Notification is None")
+            logger.warning("Cannot log to queue: Notification is None")
             return None
         
         try:
@@ -475,7 +509,7 @@ class NotificationService:
             if queue_item.channel == 'email':
                 success = self.send_email_notification(user, notification.title, notification.message)
             elif queue_item.channel == 'sms':
-                success = self.send_sms_notification(user, notification.message)
+                success = self.send_sms_to_user(user, notification.message)
             else:
                 success = False
             
@@ -498,20 +532,30 @@ class NotificationService:
             queue_item.save()
             return False
     
+    # ==================== BUSINESS NOTIFICATION METHODS ====================
+    
     def send_loan_approval_notification(self, loan):
         """
         Send loan approval notification
         """
         user = loan.member.user if loan.member.user else None
         if not user:
+            logger.warning(f"No user found for loan {loan.id}")
             return
         
         title = "Loan Approved"
         message = f"Your loan of MK{loan.amount:,.2f} has been approved."
         data = {'loan_id': str(loan.id), 'amount': str(loan.amount)}
         
+        # Create in-app notification
         self.send_notification(user, title, message, 'loan_approval', data)
+        
+        # Send email
         self.send_email_notification(user, title, message)
+        
+        # Send SMS
+        sms_message = f"ECORET: Your loan of MK{loan.amount:,.2f} has been approved."
+        self.send_sms_to_user(user, sms_message)
     
     def send_new_loan_request_notification(self, loan_request):
         """
@@ -523,6 +567,7 @@ class NotificationService:
             title = "New Loan Request"
             message = f"A new loan request of MK{loan_request.amount:,.2f} has been submitted by {loan_request.requested_by.get_full_name()} for {loan_request.group.group_name}."
             data = {'request_id': str(loan_request.id)}
+            
             self.send_notification(admin, title, message, 'loan_request', data)
             self.send_email_notification(admin, title, message)
     
@@ -531,12 +576,19 @@ class NotificationService:
         Send notification that loan request was approved
         """
         user = loan_request.requested_by
+        if not user:
+            return
+            
         title = "Loan Request Approved"
         message = f"Your loan request of MK{loan_request.amount:,.2f} for {loan_request.group.group_name} has been approved by ECORET Admin."
         data = {'request_id': str(loan_request.id)}
         
         self.send_notification(user, title, message, 'loan_approval', data)
         self.send_email_notification(user, title, message)
+        
+        # Send SMS
+        sms_message = f"ECORET: Your loan request of MK{loan_request.amount:,.2f} has been approved."
+        self.send_sms_to_user(user, sms_message)
     
     def send_payment_received_notification(self, payment):
         """
@@ -547,11 +599,15 @@ class NotificationService:
             return
         
         title = "Payment Received"
-        message = f"A payment of MK{payment.amount:,.2f} has been received for {payment.loan.member.full_name}."
+        message = f"A payment of MK{payment.amount:,.2f} has been received."
         data = {'payment_id': str(payment.id), 'amount': str(payment.amount)}
         
         self.send_notification(user, title, message, 'payment_received', data)
         self.send_email_notification(user, title, message)
+        
+        # Send SMS
+        sms_message = f"ECORET: Payment of MK{payment.amount:,.2f} received."
+        self.send_sms_to_user(user, sms_message)
     
     def send_attendance_reminder(self, member, meeting):
         """
@@ -566,4 +622,77 @@ class NotificationService:
         data = {'meeting_id': str(meeting.id)}
         
         self.send_notification(user, title, message, 'attendance', data)
-        self.send_sms_notification(user, message)
+        
+        # Send SMS
+        sms_message = f"ECORET: Meeting reminder for {meeting.meeting_date.strftime('%Y-%m-%d')} at {meeting.meeting_time.strftime('%H:%M')}."
+        self.send_sms_to_user(user, sms_message)
+    
+    def send_welcome_notification(self, user):
+        """
+        Send welcome notification to a new user
+        """
+        if not user:
+            return
+        
+        title = "Welcome to ECORET!"
+        message = f"Welcome {user.get_full_name()}! Your account has been created successfully."
+        data = {'user_id': str(user.id)}
+        
+        self.send_notification(user, title, message, 'welcome', data)
+        self.send_email_notification(user, title, message)
+        
+        # Send SMS
+        sms_message = f"ECORET: Welcome {user.get_full_name()}! Your account has been created."
+        self.send_sms_to_user(user, sms_message)
+    
+    def send_member_added_notification(self, member, group):
+        """
+        Send notification when a member is added to a group
+        """
+        user = member.user if member.user else None
+        
+        # Send SMS to the member if they have a user account
+        if user and user.phone_number:
+            sms_message = f"""
+ECORET: You have been registered to {group.group_name}.
+Group Code: {group.group_code}
+Chairman: {group.chairman.get_full_name()}
+Dial *123# to access your group.
+            """
+            self.send_sms_to_user(user, sms_message)
+            
+            # Create in-app notification
+            title = "Added to Group"
+            message = f"You have been added to {group.group_name}."
+            data = {'group_id': str(group.id), 'group_name': group.group_name}
+            self.send_notification(user, title, message, 'group_member', data)
+        
+        # Send SMS directly if the member doesn't have a user account
+        elif member.phone_number:
+            sms_message = f"""
+ECORET: You have been registered to {group.group_name}.
+Group Code: {group.group_code}
+Chairman: {group.chairman.get_full_name()}
+Dial *123# to access your group.
+            """
+            self.send_direct_sms(member.phone_number, sms_message)
+    
+    def send_member_removed_notification(self, member, group):
+        """
+        Send notification when a member is removed from a group
+        """
+        user = member.user if member.user else None
+        
+        if user and user.phone_number:
+            sms_message = f"ECORET: You have been removed from {group.group_name}. Please contact your group chairman for more information."
+            self.send_sms_to_user(user, sms_message)
+            
+            # Create in-app notification
+            title = "Removed from Group"
+            message = f"You have been removed from {group.group_name}."
+            data = {'group_id': str(group.id), 'group_name': group.group_name}
+            self.send_notification(user, title, message, 'group_member', data)
+        
+        elif member.phone_number:
+            sms_message = f"ECORET: You have been removed from {group.group_name}. Please contact your group chairman for more information."
+            self.send_direct_sms(member.phone_number, sms_message)

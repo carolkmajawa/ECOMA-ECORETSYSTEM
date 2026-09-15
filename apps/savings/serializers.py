@@ -1,9 +1,10 @@
+# apps/savings/serializers.py
 from rest_framework import serializers
 from .models import Saving, SavingGoal, SavingSummary
 
 class SavingSerializer(serializers.ModelSerializer):
     member_name = serializers.CharField(source='member.full_name', read_only=True)
-    group_name = serializers.CharField(source='group.group_name', read_only=True)
+    group_name = serializers.CharField(source='group.group_name', read_only=True)  # Fixed: serializers not serializations
     
     class Meta:
         model = Saving
@@ -20,9 +21,28 @@ class SavingCreateSerializer(serializers.ModelSerializer):
         fields = ['member', 'amount', 'saving_type', 'transaction_type', 
                  'reference_number', 'notes']
     
-    def validate(self, data):
-        if data.get('amount', 0) <= 0:
+    def validate_transaction_type(self, value):
+        """Validate that transaction_type is either 'deposit' or 'withdrawal'"""
+        if value not in ['deposit', 'withdrawal']:
+            raise serializers.ValidationError("transaction_type must be 'deposit' or 'withdrawal'")
+        return value
+    
+    def validate_amount(self, value):
+        """Validate that amount is greater than 0"""
+        if value <= 0:
             raise serializers.ValidationError('Amount must be greater than 0')
+        return value
+    
+    def validate(self, data):
+        """Additional validation"""
+        # Ensure transaction_type is present
+        if 'transaction_type' not in data:
+            raise serializers.ValidationError({'transaction_type': 'This field is required'})
+        
+        # Ensure amount is present and valid
+        if 'amount' not in data or data['amount'] <= 0:
+            raise serializers.ValidationError({'amount': 'Amount must be greater than 0'})
+        
         return data
 
 class SavingGoalSerializer(serializers.ModelSerializer):

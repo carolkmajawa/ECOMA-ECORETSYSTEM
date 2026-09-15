@@ -4,7 +4,8 @@ from .views import (
     LoginView, RegisterView, LogoutView, ChangePasswordView,
     ForgotPasswordView, ResetPasswordView, UserProfileView,
     UserDeviceRegisterView, UserListView, UserActivityLogView,
-    CheckAuthView
+    CheckAuthView, AdminUserUpdateView,AdminRequestView,
+    AdminRequestDetailView,PendingAdminRequestsView,
 )
 
 urlpatterns = [
@@ -19,6 +20,9 @@ urlpatterns = [
     path('profile/', UserProfileView.as_view(), name='profile'),
     path('device/register/', UserDeviceRegisterView.as_view(), name='device-register'),
     path('users/', UserListView.as_view(), name='user-list'),
+    path('users/<uuid:pk>/status/', AdminUserUpdateView.as_view(), name='admin-user-status'),
     path('activities/', UserActivityLogView.as_view(), name='user-activities'),
-    path('device/register/', UserDeviceRegisterView.as_view(), name='device-register'),
+    path('admin-requests/', AdminRequestView.as_view(), name='admin-requests'),
+    path('admin-requests/pending/', PendingAdminRequestsView.as_view(), name='admin-requests-pending'),
+    path('admin-requests/<uuid:pk>/', AdminRequestDetailView.as_view(), name='admin-request-detail'),
 ]

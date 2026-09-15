@@ -9,6 +9,8 @@ from django.conf import settings
 from django.utils import timezone
 from django.core.cache import cache
 import logging
+from django.conf import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,25 +21,26 @@ class PayChanguService:
     """
     
     def __init__(self, environment='sandbox'):
-        """
-        Initialize PayChangu service with credentials
-        """
         self.environment = environment
-        
-        # Your PayChangu credentials
         self.public_key = "pub-test-MqOeyf0sdYolfPkJXUodu5bO8zUW9pbG"
         self.secret_key = "sec-test-XN7uZgXNi8kmegTWIitFKYPPlsPLlaVB"
-        
-        # Set base URL based on environment
+
         if environment == 'sandbox':
             self.base_url = "https://sandbox.paychangu.com/api/v1"
         else:
             self.base_url = "https://paychangu.com/api/v1"
-        
+
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.secret_key}"
         }
+
+    def _callback_url(self):
+        """Build the webhook URL PayChangu should call back on -
+        driven by settings so it stays correct as ngrok/production
+        domains change, instead of a hardcoded placeholder."""
+        base = getattr(settings, 'PUBLIC_BASE_URL', '').rstrip('/')
+        return f"{base}/api/payments/webhook/"
     
     def initiate_payout(self, phone_number, amount, reference=None, customer_name=None):
         """
@@ -61,7 +64,7 @@ class PayChanguService:
             "amount": float(amount),
             "reference": reference,
             "currency": "MWK",
-            "callback_url": "https://yourdomain.com/api/paychangu/webhook/",  # Update this
+            "callback_url": self._callback_url(),
             "description": f"ECORET payout to {customer_name or 'Member'}"
         }
         
@@ -112,7 +115,7 @@ class PayChanguService:
             "amount": float(amount),
             "reference": reference,
             "currency": "MWK",
-            "callback_url": "https://yourdomain.com/api/paychangu/webhook/",  # Update this
+            "callback_url": self._callback_url(),
             "description": f"ECORET collection from {customer_name or 'Member'}"
         }
         
@@ -140,6 +143,61 @@ class PayChanguService:
                 'error': str(e),
                 'reference': reference
             }
+
+    def get_banks(self, currency='MWK'):
+        """
+        Fetch PayChangu's list of supported banks/mobile money providers
+        and their UUIDs, needed for bank_uuid in payout requests.
+        """
+        try:
+            url = "https://api.paychangu.com/direct-charge/payouts/supported-banks"
+            response = requests.get(url, params={'currency': currency}, headers=self.headers)
+            response.raise_for_status()
+            result = response.json()
+            return {
+                'success': True,
+                'banks': result.get('data', []),
+            }
+        except requests.exceptions.RequestException as e:
+            logger.error(f"PayChangu get_banks error: {str(e)}")
+            return {'success': False, 'error': str(e), 'banks': []}
+
+    def initiate_bank_payout(self, *, bank_uuid, account_number, account_name, amount, reference):
+        """
+        Initiate a real bank payout (ECORET -> recipient's bank account)
+        via PayChangu's direct-charge payout endpoint. Status starts
+        'pending' and is only confirmed via webhook (event_type: 'api.payout').
+        """
+        payload = {
+            "payout_method": "bank_transfer",
+            "bank_uuid": bank_uuid,
+            "amount": str(amount),
+            "charge_id": reference,
+            "bank_account_name": account_name,
+            "bank_account_number": account_number,
+        }
+
+        try:
+            url = "https://api.paychangu.com/direct-charge/payouts/initialize"
+            response = requests.post(url, json=payload, headers=self.headers)
+            response.raise_for_status()
+            result = response.json()
+
+            transaction = result.get('data', {}).get('transaction', {})
+            logger.info(f"PayChangu bank payout initiated: {reference} - {result}")
+
+            return {
+                'success': result.get('status') == 'success',
+                'reference': reference,
+                'charge_id': transaction.get('charge_id'),
+                'ref_id': transaction.get('ref_id'),
+                'status': transaction.get('status'),
+                'response': result,
+            }
+        except requests.exceptions.RequestException as e:
+            logger.error(f"PayChangu bank payout error: {str(e)}")
+            return {'success': False, 'error': str(e), 'reference': reference}
+        
     
     def verify_transaction(self, reference):
         """

@@ -1,8 +1,323 @@
+# apps/savings/views.py - COMPLETE FIXED VERSION
+from rest_framework import viewsets, status, permissions, filters
+from rest_framework.response import Response
+from rest_framework.decorators import action
+from django.db.models import Q, Sum, Count
+from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
+from datetime import datetime, timedelta
+import logging
+from decimal import Decimal
+from apps.groups.models import Group, GroupMember
+from django.shortcuts import get_object_or_404
+from decimal import Decimal, InvalidOperation
+from django.utils import timezone
+from .models import Saving, SavingGoal, SavingSummary
+from .serializers import (
+    SavingSerializer, SavingCreateSerializer,
+    SavingGoalSerializer, SavingGoalCreateSerializer,
+    SavingSummarySerializer
+)
+from apps.accounts.models import UserActivityLog
+
+logger = logging.getLogger(__name__)
+
+class SavingViewSet(viewsets.ModelViewSet):
+    serializer_class = SavingSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['transaction_type', 'saving_type', 'member', 'group']
+    search_fields = ['member__full_name', 'reference_number']
+    ordering_fields = ['transaction_date', 'amount']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Saving.objects.none()
+        
+        user = self.request.user
+        
+        # Admin can see all
+        if user.role == 'admin':
+            return Saving.objects.all()
+        
+        # For chairman, get groups where they are chairman
+        if user.role == 'chairman':
+            # Get groups where user is chairman
+            chairman_groups = Group.objects.filter(chairman=user).values_list('id', flat=True)
+            
+            # FIXED: Get groups where user is secretary (via GroupMember)
+            secretary_groups = GroupMember.objects.filter(
+                user=user,
+                is_active=True
+            ).values_list('group_id', flat=True)
+            
+            # Combine all group IDs
+            all_group_ids = list(chairman_groups) + list(secretary_groups)
+            
+            return Saving.objects.filter(group__in=all_group_ids)
+        
+        # For other users, return their own savings
+        try:
+            member = GroupMember.objects.get(user=user, is_active=True)
+            return Saving.objects.filter(member=member)
+        except GroupMember.DoesNotExist:
+            return Saving.objects.none()
+    
+    def create(self, request):
+        print("=== CREATE SAVING ===")
+        print("Request data:", request.data)
+        
+        serializer = SavingCreateSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            print("Serializer errors:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        member = serializer.validated_data['member']
+        group = member.group
+        
+        if not group.is_active:
+            return Response(
+                {'error': 'Group must be active to record savings'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create the saving with all required fields
+        saving = Saving.objects.create(
+            group=group,
+            recorded_by=request.user,
+            **serializer.validated_data
+        )
+        
+        print("Saving created:", saving)
+        print("Transaction type:", saving.transaction_type)
+        print("Amount:", saving.amount)
+        print("Member:", saving.member.full_name)
+        
+        UserActivityLog.objects.create(
+            user=request.user,
+            action='record_saving',
+            details={
+                'saving_id': str(saving.id),
+                'amount': str(saving.amount),
+                'type': saving.transaction_type
+            }
+        )
+        
+        return Response(SavingSerializer(saving).data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=False, methods=['post'])
+    def test_create(self, request):
+        """Debug endpoint to test saving creation"""
+        print("=== DEBUG: Test Create ===")
+        print("Request data:", request.data)
+        
+        serializer = SavingCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            print("Serializer valid:", serializer.validated_data)
+            return Response({"status": "valid", "data": serializer.validated_data})
+        else:
+            print("Serializer errors:", serializer.errors)
+            return Response({"status": "invalid", "errors": serializer.errors}, 
+                           status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        user = request.user
+        
+        if user.role == 'admin':
+            groups = Group.objects.filter(is_active=True)
+        else:
+            # FIXED: Get groups where user is chairman
+            chairman_groups = Group.objects.filter(chairman=user)
+            
+            # FIXED: Get groups where user is secretary (via GroupMember)
+            secretary_groups = GroupMember.objects.filter(
+                user=user,
+                is_active=True
+            ).values_list('group', flat=True)
+            
+            # Combine both
+            groups = list(chairman_groups) + list(Group.objects.filter(id__in=secretary_groups))
+        
+        if not groups:
+            return Response({
+                'balance': 0,
+                'total_deposits': 0,
+                'total_withdrawals': 0,
+                'group_count': 0,
+                'group_breakdown': []
+            })
+        
+        total_savings = Saving.objects.filter(group__in=groups).aggregate(
+            total_deposits=Sum('amount', filter=Q(transaction_type='deposit')),
+            total_withdrawals=Sum('amount', filter=Q(transaction_type='withdrawal'))
+        )
+        
+        total_deposits = total_savings['total_deposits'] or 0
+        total_withdrawals = total_savings['total_withdrawals'] or 0
+        balance = total_deposits - total_withdrawals
+        
+        group_breakdown = []
+        for group in groups:
+            group_savings = Saving.objects.filter(
+                group=group
+            ).aggregate(
+                deposits=Sum('amount', filter=Q(transaction_type='deposit')),
+                withdrawals=Sum('amount', filter=Q(transaction_type='withdrawal'))
+            )
+            
+            group_deposits = group_savings['deposits'] or 0
+            group_withdrawals = group_savings['withdrawals'] or 0
+            group_balance = group_deposits - group_withdrawals
+            
+            group_breakdown.append({
+                'group_name': group.group_name,
+                'balance': float(group_balance)
+            })
+        
+        group_breakdown.sort(key=lambda x: x['balance'], reverse=True)
+        
+        return Response({
+            'balance': float(balance),
+            'total_deposits': float(total_deposits),
+            'total_withdrawals': float(total_withdrawals),
+            'group_count': len(groups),
+            'group_breakdown': group_breakdown
+        })
+    
+    @action(detail=False, methods=['get'], url_path='member/(?P<member_id>[^/.]+)')
+    def member_savings(self, request, member_id=None):
+        """Get savings for a specific member"""
+        member = get_object_or_404(GroupMember, id=member_id)
+        savings = self.get_queryset().filter(member=member)
+        
+        total_deposits = savings.filter(transaction_type='deposit').aggregate(total=Sum('amount'))['total'] or 0
+        total_withdrawals = savings.filter(transaction_type='withdrawal').aggregate(total=Sum('amount'))['total'] or 0
+        
+        return Response({
+            'member': {
+                'id': str(member.id),
+                'full_name': member.full_name,
+                'phone_number': member.phone_number
+            },
+            'total_deposits': float(total_deposits),
+            'total_withdrawals': float(total_withdrawals),
+            'balance': float(total_deposits - total_withdrawals),
+            'transactions': SavingSerializer(savings, many=True).data
+        })
+
+
+class SavingGoalViewSet(viewsets.ModelViewSet):
+    serializer_class = SavingGoalSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['is_completed']
+    search_fields = ['name', 'description']
+    
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return SavingGoal.objects.none()
+        
+        user = self.request.user
+        
+        # Admin can see all
+        if user.role == 'admin':
+            return SavingGoal.objects.all()
+        
+        # For chairman, get groups where they are chairman
+        if user.role == 'chairman':
+            chairman_groups = Group.objects.filter(chairman=user).values_list('id', flat=True)
+            
+            # FIXED: Get groups where user is secretary (via GroupMember)
+            secretary_groups = GroupMember.objects.filter(
+                user=user,
+                is_active=True
+            ).values_list('group_id', flat=True)
+            
+            all_group_ids = list(chairman_groups) + list(secretary_groups)
+            return SavingGoal.objects.filter(group__in=all_group_ids)
+        
+        return SavingGoal.objects.none()
+    
+    def create(self, request):
+        group = request.user.chairman_groups.first()
+        if not group:
+            return Response(
+                {'error': 'You must be a chairman to create saving goals'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = SavingGoalCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        goal = SavingGoal.objects.create(
+            group=group,
+            **serializer.validated_data
+        )
+        
+        return Response(SavingGoalSerializer(goal).data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'])
+    def add_funds(self, request, pk=None):
+        goal = self.get_object()
+        
+        amount = request.data.get('amount')
+        if not amount:
+            return Response(
+                {'error': 'Amount is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            amount_str = str(amount).strip()
+            if not amount_str.replace('.', '').replace('-', '').isdigit():
+                raise ValueError("Invalid amount format")
+            amount = Decimal(amount_str)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid amount'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if amount <= 0:
+            return Response(
+                {'error': 'Amount must be greater than 0'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        goal.current_amount += amount
+        if goal.current_amount >= goal.target_amount:
+            goal.is_completed = True
+        goal.save()
+        
+        return Response(SavingGoalSerializer(goal).data)
+    
+    @action(detail=True, methods=['get'])
+    def progress(self, request, pk=None):
+        goal = self.get_object()
+        
+        progress_percentage = (goal.current_amount / goal.target_amount * 100) if goal.target_amount > 0 else 0
+        
+        return Response({
+            'id': str(goal.id),
+            'name': goal.name,
+            'target_amount': float(goal.target_amount),
+            'current_amount': float(goal.current_amount),
+            'remaining': float(goal.target_amount - goal.current_amount),
+            'progress_percentage': min(float(progress_percentage), 100),
+            'is_completed': goal.is_completed,
+            'created_at': goal.created_at,
+            'target_date': goal.target_date
+        })
+
+
+
+# # apps/savings/views.py
 # from rest_framework import viewsets, status, permissions, filters
 # from rest_framework.response import Response
 # from rest_framework.decorators import action
 # from django.db.models import Q, Sum, Count
 # from django.utils import timezone
+# from decimal import Decimal
 # from django_filters.rest_framework import DjangoFilterBackend
 # from datetime import datetime, timedelta
 # import logging
@@ -27,7 +342,7 @@
 #     ordering_fields = ['transaction_date', 'amount']
     
 #     def get_queryset(self):
-#         if getattr(self, 'swagger_fake_view',False):
+#         if getattr(self, 'swagger_fake_view', False):
 #             return Saving.objects.none()
         
 #         user = self.request.user
@@ -70,14 +385,22 @@
 #     @action(detail=False, methods=['get'])
 #     def summary(self, request):
 #         user = request.user
+        
 #         if user.role == 'admin':
 #             groups = Group.objects.filter(is_active=True)
 #         else:
 #             groups = user.chairman_groups.all() | user.secretary_groups.all()
         
 #         if not groups:
-#             return Response({'error': 'No groups found'}, status=status.HTTP_400_BAD_REQUEST)
+#             return Response({
+#                 'balance': 0,
+#                 'total_deposits': 0,
+#                 'total_withdrawals': 0,
+#                 'group_count': 0,
+#                 'group_breakdown': []
+#             })
         
+#         # Get total savings
 #         total_savings = Saving.objects.filter(group__in=groups).aggregate(
 #             total_deposits=Sum('amount', filter=Q(transaction_type='deposit')),
 #             total_withdrawals=Sum('amount', filter=Q(transaction_type='withdrawal'))
@@ -87,11 +410,34 @@
 #         total_withdrawals = total_savings['total_withdrawals'] or 0
 #         balance = total_deposits - total_withdrawals
         
+#         # Get group breakdown for dashboard graph
+#         group_breakdown = []
+#         for group in groups:
+#             group_savings = Saving.objects.filter(
+#                 group=group
+#             ).aggregate(
+#                 deposits=Sum('amount', filter=Q(transaction_type='deposit')),
+#                 withdrawals=Sum('amount', filter=Q(transaction_type='withdrawal'))
+#             )
+            
+#             group_deposits = group_savings['deposits'] or 0
+#             group_withdrawals = group_savings['withdrawals'] or 0
+#             group_balance = group_deposits - group_withdrawals
+            
+#             group_breakdown.append({
+#                 'group_name': group.group_name,
+#                 'balance': float(group_balance)
+#             })
+        
+#         # Sort by balance descending
+#         group_breakdown.sort(key=lambda x: x['balance'], reverse=True)
+        
 #         return Response({
-#             'total_deposits': total_deposits,
-#             'total_withdrawals': total_withdrawals,
-#             'balance': balance,
-#             'group_count': groups.count()
+#             'balance': float(balance),
+#             'total_deposits': float(total_deposits),
+#             'total_withdrawals': float(total_withdrawals),
+#             'group_count': groups.count(),
+#             'group_breakdown': group_breakdown
 #         })
     
 #     @action(detail=True, methods=['get'], url_path='member/(?P<member_id>[^/.]+)')
@@ -160,7 +506,7 @@
 #             )
         
 #         try:
-#             amount = float(amount)
+#             amount = Decimal(str(amount))
 #         except ValueError:
 #             return Response(
 #                 {'error': 'Invalid amount'},
@@ -179,236 +525,21 @@
 #         goal.save()
         
 #         return Response(SavingGoalSerializer(goal).data)
-
-
-# apps/savings/views.py
-from rest_framework import viewsets, status, permissions, filters
-from rest_framework.response import Response
-from rest_framework.decorators import action
-from django.db.models import Q, Sum, Count
-from django.utils import timezone
-from django_filters.rest_framework import DjangoFilterBackend
-from datetime import datetime, timedelta
-import logging
-from apps.groups.models import Group, GroupMember
-from django.shortcuts import get_object_or_404
-
-from .models import Saving, SavingGoal, SavingSummary
-from .serializers import (
-    SavingSerializer, SavingCreateSerializer,
-    SavingGoalSerializer, SavingGoalCreateSerializer,
-    SavingSummarySerializer
-)
-from apps.accounts.models import UserActivityLog
-
-logger = logging.getLogger(__name__)
-
-class SavingViewSet(viewsets.ModelViewSet):
-    serializer_class = SavingSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['transaction_type', 'saving_type', 'member', 'group']
-    search_fields = ['member__full_name', 'reference_number']
-    ordering_fields = ['transaction_date', 'amount']
     
-    def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
-            return Saving.objects.none()
+#     @action(detail=True, methods=['get'])
+#     def progress(self, request, pk=None):
+#         goal = self.get_object()
         
-        user = self.request.user
-        if user.role == 'admin':
-            return Saving.objects.all()
-        groups = user.chairman_groups.all() | user.secretary_groups.all()
-        return Saving.objects.filter(group__in=groups)
-    
-    def create(self, request):
-        serializer = SavingCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+#         progress_percentage = (goal.current_amount / goal.target_amount * 100) if goal.target_amount > 0 else 0
         
-        member = serializer.validated_data['member']
-        group = member.group
-        
-        if not group.is_active:
-            return Response(
-                {'error': 'Group must be active to record savings'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        saving = Saving.objects.create(
-            group=group,
-            recorded_by=request.user,
-            **serializer.validated_data
-        )
-        
-        UserActivityLog.objects.create(
-            user=request.user,
-            action='record_saving',
-            details={
-                'saving_id': str(saving.id),
-                'amount': str(saving.amount),
-                'type': saving.transaction_type
-            }
-        )
-        
-        return Response(SavingSerializer(saving).data, status=status.HTTP_201_CREATED)
-    
-    @action(detail=False, methods=['get'])
-    def summary(self, request):
-        user = request.user
-        
-        if user.role == 'admin':
-            groups = Group.objects.filter(is_active=True)
-        else:
-            groups = user.chairman_groups.all() | user.secretary_groups.all()
-        
-        if not groups:
-            return Response({
-                'balance': 0,
-                'total_deposits': 0,
-                'total_withdrawals': 0,
-                'group_count': 0,
-                'group_breakdown': []
-            })
-        
-        # Get total savings
-        total_savings = Saving.objects.filter(group__in=groups).aggregate(
-            total_deposits=Sum('amount', filter=Q(transaction_type='deposit')),
-            total_withdrawals=Sum('amount', filter=Q(transaction_type='withdrawal'))
-        )
-        
-        total_deposits = total_savings['total_deposits'] or 0
-        total_withdrawals = total_savings['total_withdrawals'] or 0
-        balance = total_deposits - total_withdrawals
-        
-        # Get group breakdown for dashboard graph
-        group_breakdown = []
-        for group in groups:
-            group_savings = Saving.objects.filter(
-                group=group
-            ).aggregate(
-                deposits=Sum('amount', filter=Q(transaction_type='deposit')),
-                withdrawals=Sum('amount', filter=Q(transaction_type='withdrawal'))
-            )
-            
-            group_deposits = group_savings['deposits'] or 0
-            group_withdrawals = group_savings['withdrawals'] or 0
-            group_balance = group_deposits - group_withdrawals
-            
-            group_breakdown.append({
-                'group_name': group.group_name,
-                'balance': float(group_balance)
-            })
-        
-        # Sort by balance descending
-        group_breakdown.sort(key=lambda x: x['balance'], reverse=True)
-        
-        return Response({
-            'balance': float(balance),
-            'total_deposits': float(total_deposits),
-            'total_withdrawals': float(total_withdrawals),
-            'group_count': groups.count(),
-            'group_breakdown': group_breakdown
-        })
-    
-    @action(detail=True, methods=['get'], url_path='member/(?P<member_id>[^/.]+)')
-    def member_savings(self, request, member_id=None):
-        member = get_object_or_404(GroupMember, id=member_id)
-        savings = self.get_queryset().filter(member=member)
-        
-        total_deposits = savings.filter(transaction_type='deposit').aggregate(total=Sum('amount'))['total'] or 0
-        total_withdrawals = savings.filter(transaction_type='withdrawal').aggregate(total=Sum('amount'))['total'] or 0
-        
-        return Response({
-            'member': {
-                'id': str(member.id),
-                'full_name': member.full_name,
-                'phone_number': member.phone_number
-            },
-            'total_deposits': total_deposits,
-            'total_withdrawals': total_withdrawals,
-            'balance': total_deposits - total_withdrawals,
-            'transactions': SavingSerializer(savings, many=True).data
-        })
-
-class SavingGoalViewSet(viewsets.ModelViewSet):
-    serializer_class = SavingGoalSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['is_completed']
-    search_fields = ['name', 'description']
-    
-    def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
-            return SavingGoal.objects.none()
-        
-        user = self.request.user
-        if user.role == 'admin':
-            return SavingGoal.objects.all()
-        groups = user.chairman_groups.all() | user.secretary_groups.all()
-        return SavingGoal.objects.filter(group__in=groups)
-    
-    def create(self, request):
-        group = request.user.chairman_groups.first()
-        if not group:
-            return Response(
-                {'error': 'You must be a chairman to create saving goals'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        serializer = SavingGoalCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        goal = SavingGoal.objects.create(
-            group=group,
-            **serializer.validated_data
-        )
-        
-        return Response(SavingGoalSerializer(goal).data, status=status.HTTP_201_CREATED)
-    
-    @action(detail=True, methods=['post'])
-    def add_funds(self, request, pk=None):
-        goal = self.get_object()
-        
-        amount = request.data.get('amount')
-        if not amount:
-            return Response(
-                {'error': 'Amount is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            amount = float(amount)
-        except ValueError:
-            return Response(
-                {'error': 'Invalid amount'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if amount <= 0:
-            return Response(
-                {'error': 'Amount must be greater than 0'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        goal.current_amount += amount
-        if goal.current_amount >= goal.target_amount:
-            goal.is_completed = True
-        goal.save()
-        
-        return Response(SavingGoalSerializer(goal).data)
-    
-    @action(detail=True, methods=['get'])
-    def progress(self, request, pk=None):
-        goal = self.get_object()
-        
-        progress_percentage = (goal.current_amount / goal.target_amount * 100) if goal.target_amount > 0 else 0
-        
-        return Response({
-            'id': str(goal.id),
-            'name': goal.name,
-            'target_amount': float(goal.target_amount),
-            'current_amount': float(goal.current_amount),
-            'remaining': float(goal.target_amount - goal.current_amount),
-            'progress_percentage': min(progress_percentage, 100),
-            'is_completed': goal.is_completed,
-            'created_at': goal.created_at,
-            'target_date': goal.target_date
-        })
+#         return Response({
+#             'id': str(goal.id),
+#             'name': goal.name,
+#             'target_amount': float(goal.target_amount),
+#             'current_amount': float(goal.current_amount),
+#             'remaining': float(goal.target_amount - goal.current_amount),
+#             'progress_percentage': min(progress_percentage, 100),
+#             'is_completed': goal.is_completed,
+#             'created_at': goal.created_at,
+#             'target_date': goal.target_date
+#         })

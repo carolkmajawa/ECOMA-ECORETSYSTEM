@@ -41,8 +41,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         db_index=True
     )
     gender = models.CharField(max_length=1, choices=[('M', 'Male'), ('F', 'Female')], blank=True, null=True)
-    date_of_birth = models.DateField(blank=True, null=True)  # <-- ADD THIS
-    national_id = models.CharField(max_length=50, blank=True, null=True)  # <-- ADD THIS
+    date_of_birth = models.DateField(blank=True, null=True)
+    national_id = models.CharField(max_length=50, blank=True, null=True)
     profile_picture = models.ImageField(upload_to='profiles/', blank=True, null=True) 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='member')
     is_active = models.BooleanField(default=True)
@@ -85,6 +85,49 @@ class User(AbstractBaseUser, PermissionsMixin):
     def is_admin(self):
         return self.role == 'admin'
 
+
+class AdminRequest(models.Model):
+    """
+    Model to track admin access requests from users
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='admin_request'
+    )
+    full_name = models.CharField(max_length=255)
+    email = models.EmailField()
+    phone_number = models.CharField(max_length=20)
+    reason = models.TextField(blank=True, null=True, help_text="Why do you want to be an admin?")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    reviewed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_admin_requests'
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'admin_requests'
+        verbose_name = 'Admin Request'
+        verbose_name_plural = 'Admin Requests'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.status}"
+
+
 class UserDevice(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='devices')
     device_id = models.CharField(max_length=255)
@@ -98,6 +141,7 @@ class UserDevice(models.Model):
         db_table = 'user_devices'
         unique_together = ['user', 'device_id']
 
+
 class UserActivityLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='activities')
     action = models.CharField(max_length=50)
@@ -109,6 +153,7 @@ class UserActivityLog(models.Model):
     class Meta:
         db_table = 'user_activity_logs'
         ordering = ['-created_at']
+
 
 class PasswordResetToken(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)

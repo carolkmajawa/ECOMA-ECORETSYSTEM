@@ -54,15 +54,26 @@ class PaymentService:
                 customer_name=member.full_name,
             )
         except Exception as exc:
-            # Log identifying info only — never the raw provider payload,
-            # which may itself contain secrets on the provider's side.
             log_safe("STK push initiation failed", level='error',
-                     reference=reference, payment_type=payment_type,
-                     amount=str(amount))
+                    reference=reference, payment_type=payment_type,
+                    amount=str(amount))
             raise PaymentError("Payment could not be started. Please try again later.") from exc
 
         if not isinstance(payment_result, dict):
             payment_result = {'success': False, 'error': str(payment_result)}
+
+        # NEW: treat a provider-reported failure the same as a raised
+        # exception - don't tell the user their payment was sent when it
+        # demonstrably wasn't.
+        if not payment_result.get('success'):
+            log_safe("STK push rejected by provider", level='error',
+                    reference=reference, payment_type=payment_type,
+                    amount=str(amount), error=payment_result.get('error'))
+            raise PaymentError("Payment could not be started. Please try again later.")
+
+        stored_response = dict(payment_result)
+        stored_response['_ecoret_payment_type'] = payment_type
+        stored_response['_ecoret_payload'] = payload or {}
 
         MobileMoneyTransaction.objects.create(
             group=member.group,
@@ -74,7 +85,7 @@ class PaymentService:
             reference=reference,
             status='pending',
             transaction_id=payment_result.get('transaction_id'),
-            response_data=payment_result,
+            response_data=stored_response,
         )
 
         return {
