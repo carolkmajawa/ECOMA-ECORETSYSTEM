@@ -1,1 +1,41 @@
-ÿþ
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Django
+*.sqlite3
+db.sqlite3
+db_main_backup.sqlite3
+logs/
+media/
+staticfiles/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Coverage / test
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Virtualenv
+venv/
+env/
+ENV/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

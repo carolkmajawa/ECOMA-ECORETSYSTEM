@@ -7,6 +7,13 @@ from .views import (
     CheckAuthView, AdminUserUpdateView,AdminRequestView,
     AdminRequestDetailView,PendingAdminRequestsView,
 )
+from django.http import JsonResponse
+
+def health_check(request):
+    return JsonResponse({"status": "ok"})
+
+# In your urlpatterns:
+path('api/health/', health_check, name='health-check'),
 
 urlpatterns = [
     path('login/', LoginView.as_view(), name='login'),

@@ -1,0 +1,137 @@
+databases:
+  - name: ecoma-db
+    databaseName: ecoma
+    plan: free
+    region: frankfurt
+
+services:
+  # ---------- Redis ----------
+  - type: redis
+    name: ecoma-redis
+    plan: free
+    region: frankfurt
+    ipAllowList: []
+
+  # ---------- Web (Gunicorn) ----------
+  - type: web
+    name: ecoma-web
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: ./build.sh
+    startCommand: ./start.sh web
+    healthCheckPath: /api/health/
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ecoma-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ecoma-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: PUBLIC_BASE_URL
+        sync: false          # set manually in Render dashboard
+      - key: PAYCHANGU_PUBLIC_KEY
+        sync: false
+      - key: PAYCHANGU_SECRET_KEY
+        sync: false
+      - key: PAYCHANGU_ENVIRONMENT
+        value: sandbox
+      - key: AFRICA_TALKING_API_KEY
+        sync: false
+      - key: AFRICA_TALKING_USERNAME
+        sync: false
+      - key: AFRICA_TALKING_SANDBOX
+        value: "True"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+
+  # ---------- Celery Worker ----------
+  - type: worker
+    name: ecoma-worker
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./start.sh worker
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ecoma-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ecoma-redis
+          property: connectionString
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: ecoma-web
+          envVarKey: SECRET_KEY
+      - key: DEBUG
+        value: "False"
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: PAYCHANGU_PUBLIC_KEY
+        sync: false
+      - key: PAYCHANGU_SECRET_KEY
+        sync: false
+      - key: PAYCHANGU_ENVIRONMENT
+        value: sandbox
+      - key: AFRICA_TALKING_API_KEY
+        sync: false
+      - key: AFRICA_TALKING_USERNAME
+        sync: false
+      - key: AFRICA_TALKING_SANDBOX
+        value: "True"
+
+  # ---------- Celery Beat ----------
+  - type: worker
+    name: ecoma-beat
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./start.sh beat
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ecoma-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ecoma-redis
+          property: connectionString
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: ecoma-web
+          envVarKey: SECRET_KEY
+      - key: DEBUG
+        value: "False"
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: PAYCHANGU_PUBLIC_KEY
+        sync: false
+      - key: PAYCHANGU_SECRET_KEY
+        sync: false
+      - key: PAYCHANGU_ENVIRONMENT
+        value: sandbox
+      - key: AFRICA_TALKING_API_KEY
+        sync: false
+      - key: AFRICA_TALKING_USERNAME
+        sync: false
+      - key: AFRICA_TALKING_SANDBOX
+        value: "True"
