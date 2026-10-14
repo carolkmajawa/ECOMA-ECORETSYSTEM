@@ -1,5 +1,3 @@
-# apps/reports/services/report_generator.py
-
 from datetime import datetime
 from django.db import models
 from django.utils import timezone
@@ -13,7 +11,13 @@ User = get_user_model()
 
 class ReportDataCollector:
     """Collect all data needed for a cycle report"""
-    
+
+    GENDER_LABELS = {'M': 'Male', 'F': 'Female', 'O': 'Other'}
+
+    # Set to True to print only the last 4 characters of each national ID
+    # (e.g. ****1234) in every report instead of the full number.
+    MASK_NATIONAL_ID = False
+
     def __init__(self, group, start_date, end_date, include_members=None, include_sections=None):
         self.group = group
         self.start_date = start_date
@@ -65,7 +69,13 @@ class ReportDataCollector:
         return data
     
     def get_group_info(self):
-        """Get group information"""
+        """Get group information, including the gender breakdown"""
+        active = self.group.members.filter(is_active=True)
+        total = active.count()
+        male = active.filter(gender='M').count()
+        female = active.filter(gender='F').count()
+        other = active.filter(gender='O').count()
+
         return {
             'id': str(self.group.id),
             'name': self.group.group_name,
@@ -73,8 +83,13 @@ class ReportDataCollector:
             'address': self.group.address or 'N/A',
             'created_at': self.group.created_at.isoformat() if self.group.created_at else None,
             'is_active': self.group.is_active,
-            'total_members': self.group.members.filter(is_active=True).count(),
-            'active_members': self.group.members.filter(is_active=True).count(),
+            'total_members': total,
+            'active_members': total,
+            'male_count': male,
+            'female_count': female,
+            'other_count': other,
+            # members with no gender recorded (or an unexpected value)
+            'unspecified_count': total - male - female - other,
         }
     
     def get_cycle_info(self):
@@ -85,6 +100,15 @@ class ReportDataCollector:
             'is_active': self.group.is_cycle_active,
             'duration_months': self.group.cycle_duration_months,
         }
+
+    def _national_id(self, member):
+        """National ID for display, optionally masked"""
+        value = (member.national_id or '').strip()
+        if not value:
+            return 'N/A'
+        if self.MASK_NATIONAL_ID and len(value) > 4:
+            return '*' * (len(value) - 4) + value[-4:]
+        return value
     
     def get_member_data(self):
         """Get member data"""
@@ -92,8 +116,10 @@ class ReportDataCollector:
         return [{
             'id': str(m.id),
             'full_name': m.full_name,
+            'national_id': self._national_id(m),
             'phone_number': m.phone_number,
             'gender': m.gender or 'N/A',
+            'gender_label': self.GENDER_LABELS.get(m.gender, 'N/A'),
             'address': m.address or 'N/A',
             'joined_at': m.joined_date.isoformat() if m.joined_date else None,
             'is_active': m.is_active,
@@ -189,7 +215,8 @@ class ReportDataCollector:
             'transactions': [{
                 'id': str(e.id),
                 'date': e.recorded_at.isoformat() if e.recorded_at else None,
-                'description': e.description or e.note or 'N/A',
+                # LedgerEntry has no `note` field, only `description`
+                'description': e.description or 'N/A',
                 'category': e.category or 'Uncategorized',
                 'transaction_type': e.transaction_type,
                 'amount': e.amount or 0,

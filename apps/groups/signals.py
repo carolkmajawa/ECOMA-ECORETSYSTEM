@@ -1,26 +1,24 @@
-# apps/groups/signals.py - COMPLETE WORKING VERSION
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 import logging
-
 from .models import LedgerEntry
-
-# Import models from other apps
 from apps.savings.models import Saving
 from apps.loans.models import Loan, LoanRepayment
 from apps.attendance.models import Attendance
 
+from django.db import transaction
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from .services import sync_entry_to_saving
+
 logger = logging.getLogger(__name__)
 
-
-# ==================== SAVINGS SIGNAL ====================
 @receiver(post_save, sender=Saving)
 def create_savings_ledger_entry(sender, instance, created, **kwargs):
     """Auto-create ledger entry when a savings transaction is created"""
     if created:
         try:
-            # Check if ledger entry already exists for this saving
             existing = LedgerEntry.objects.filter(
                 source_model='savings',
                 source_id=instance.id,
@@ -30,14 +28,9 @@ def create_savings_ledger_entry(sender, instance, created, **kwargs):
             if not existing:
                 member = instance.member
                 group = member.group
-                
-                # Determine transaction type
                 transaction_type = 'savings_contribution' if instance.transaction_type == 'deposit' else 'withdrawal'
-                
-                # FIXED: Convert UUID to string FIRST, then slice
                 saving_id_str = str(instance.id)
                 
-                # Create the ledger entry
                 LedgerEntry.objects.create(
                     group=group,
                     transaction_type=transaction_type,
@@ -56,8 +49,19 @@ def create_savings_ledger_entry(sender, instance, created, **kwargs):
         except Exception as e:
             logger.error(f"Error creating ledger entry for savings: {e}")
 
+@receiver(post_save, sender=LedgerEntry)
+def mirror_ledger_entry_to_saving(sender, instance, **kwargs):
+    """Keep the savings table in step with ledger deposits/withdrawals."""
 
-# ==================== LOAN SIGNALS ====================
+    def _sync():
+        try:
+            sync_entry_to_saving(instance)
+        except Exception:
+            # A sync problem must never break recording a ledger entry
+            logger.exception('Ledger -> savings sync failed for entry %s', instance.pk)
+
+    transaction.on_commit(_sync)
+
 @receiver(post_save, sender=Loan)
 def create_loan_ledger_entry(sender, instance, created, **kwargs):
     """Auto-create ledger entry when a loan is disbursed"""
@@ -73,8 +77,6 @@ def create_loan_ledger_entry(sender, instance, created, **kwargs):
             if not existing:
                 group = instance.group
                 member = instance.member
-                
-                # FIXED: Convert UUID to string FIRST, then slice
                 loan_id_str = str(instance.id)
                 
                 LedgerEntry.objects.create(
@@ -112,7 +114,6 @@ def create_repayment_ledger_entry(sender, instance, created, **kwargs):
                 group = loan.group
                 member = loan.member
                 
-                # FIXED: Convert UUID to string FIRST, then slice
                 loan_id_str = str(loan.id)
                 today_str = timezone.now().strftime('%Y%m%d')
                 
@@ -132,7 +133,6 @@ def create_repayment_ledger_entry(sender, instance, created, **kwargs):
                 )
                 logger.info(f"Auto-created ledger entry for repayment {instance.id}")
                 
-                # Record interest if paid
                 if hasattr(instance, 'interest_paid') and instance.interest_paid and instance.interest_paid > 0:
                     LedgerEntry.objects.create(
                         group=group,
@@ -152,8 +152,6 @@ def create_repayment_ledger_entry(sender, instance, created, **kwargs):
         except Exception as e:
             logger.error(f"Error creating ledger entry for repayment: {e}")
 
-
-# ==================== ATTENDANCE SIGNALS ====================
 @receiver(post_save, sender=Attendance)
 def create_attendance_ledger_entry(sender, instance, created, **kwargs):
     """Auto-create ledger entry when attendance fine is recorded"""
@@ -169,8 +167,6 @@ def create_attendance_ledger_entry(sender, instance, created, **kwargs):
             if not existing:
                 member = instance.member
                 group = member.group
-                
-                # FIXED: Convert UUID to string FIRST, then slice
                 attendance_id_str = str(instance.id)
                 
                 LedgerEntry.objects.create(

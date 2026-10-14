@@ -6,5 +6,5 @@ class GroupsConfig(AppConfig):
     verbose_name = 'Group Management'
 
     def ready(self):
-        # Import signals to register them
         import apps.groups.signals
+        from . import signals

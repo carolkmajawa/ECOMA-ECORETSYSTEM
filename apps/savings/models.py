@@ -9,7 +9,14 @@ class Saving(models.Model):
         ('voluntary', 'Voluntary'),
         ('compulsory', 'Compulsory'),
     ]
-    
+
+    ledger_entry = models.OneToOneField(
+            'groups.LedgerEntry',
+            null=True,
+            blank=True,
+            on_delete=models.SET_NULL,
+            related_name='saving_copy',
+        )
     TRANSACTION_TYPES = [
         ('deposit', 'Deposit'),
         ('withdrawal', 'Withdrawal'),

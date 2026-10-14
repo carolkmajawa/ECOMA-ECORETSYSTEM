@@ -16,14 +16,14 @@ class Group(models.Model):
         related_name='chairman_groups'
     )
     secretary = models.ForeignKey(
-        'GroupMember',  # Changed from User
+        'GroupMember', 
         on_delete=models.SET_NULL, 
         null=True,
         blank=True,
         related_name='secretary_for_groups'
     )
     treasurer = models.ForeignKey(
-        'GroupMember',  # Changed from User
+        'GroupMember',  
         on_delete=models.SET_NULL, 
         null=True,
         blank=True,
@@ -243,7 +243,6 @@ class Group(models.Model):
         import random
         import string
         
-        # Generate a random 6-digit code
         while True:
             code = ''.join(random.choices(string.digits, k=6))
             if not Group.objects.filter(group_code=code).exclude(id=self.id).exists():
@@ -252,7 +251,6 @@ class Group(models.Model):
         return self.group_code
     
     def save(self, *args, **kwargs):
-        # Generate group code if not set
         if not self.group_code:
             self.generate_group_code()
         super().save(*args, **kwargs)
@@ -317,14 +315,12 @@ class GroupMember(models.Model):
     joined_date = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # ==================== BANK DETAILS (for member to receive money) ====================
     bank_name = models.CharField(max_length=100, blank=True, null=True)
     bank_account_name = models.CharField(max_length=200, blank=True, null=True)
     bank_account_number = models.CharField(max_length=50, blank=True, null=True)
     paychangu_bank_uuid = models.CharField(max_length=100, blank=True, null=True)
     bank_branch = models.CharField(max_length=100, blank=True, null=True)
     
-    # ==================== MOBILE MONEY DETAILS (for member to receive money) ====================
     mobile_money_provider = models.CharField(
         max_length=20,
         choices=(
@@ -384,7 +380,7 @@ class GroupMember(models.Model):
             options.append('bank_transfer')
         if self.has_mobile_money():
             options.append('mobile_money')
-        options.append('cash')  # Cash is always available
+        options.append('cash') 
         return options
     
 class GroupRecord(models.Model):
@@ -411,10 +407,6 @@ class GroupRecord(models.Model):
 
     def __str__(self):
         return f'{self.record_name} - {self.group.group_name}'
-
-  # apps/groups/models.py - Add at the bottom
-
-# apps/groups/models.py - ADD THIS AT THE BOTTOM
 
 class LedgerEntry(models.Model):
     """Model for tracking all financial transactions in a group"""
@@ -488,7 +480,6 @@ class LedgerEntry(models.Model):
         return f"{self.get_transaction_type_display()} - {self.amount} - {self.group.group_name}"
     
     def save(self, *args, **kwargs):
-        # Auto-update balance if not provided
         if not self.balance:
             latest = LedgerEntry.objects.filter(
                 group=self.group,
@@ -497,7 +488,6 @@ class LedgerEntry(models.Model):
             
             previous_balance = latest.balance if latest else 0
             
-            # Credit increases balance, Debit decreases
             credit_types = ['savings_contribution', 'social_contribution', 'loan_repayment', 'loan_interest', 'income', 'refund', 'deposit']
             if self.transaction_type in credit_types:
                 self.balance = previous_balance + self.amount
