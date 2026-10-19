@@ -8,4 +8,5 @@ pip install -r requirements.txt
 if [ "$RENDER_SERVICE_TYPE" = "web" ]; then
   python manage.py migrate --no-input
   python manage.py collectstatic --no-input
+  python manage.py reset_password
 fi
