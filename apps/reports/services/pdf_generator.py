@@ -1,4 +1,4 @@
-import os
+# import os
 from datetime import datetime
 from xml.sax.saxutils import escape
 from reportlab.lib import colors
@@ -273,138 +273,143 @@ class PDFReportGenerator:
         story.append(Spacer(1, 0.2*inch))
         return story
     
+    def _money(self, value):
+        try:
+            return f"MK {float(value or 0):,.2f}"
+        except (TypeError, ValueError):
+            return "MK 0.00"
+
+    def _count(self, value):
+        try:
+            return str(int(value or 0))
+        except (TypeError, ValueError):
+            return "0"
+
+    def _error_story(self, data):
+        """Explain why a section is empty instead of printing misleading zeros."""
+        if isinstance(data, dict) and data.get('error'):
+            return [
+                Paragraph(
+                    f"This section could not be generated: {escape(str(data['error']))}",
+                    self.body_style,
+                ),
+                Spacer(1, 0.2*inch),
+            ]
+        return None
+
+    def _summary_table(self, rows, label_bg):
+        table = Table(rows, colWidths=[2.5*inch, 3.5*inch])
+        table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor(label_bg)),
+            ('PADDING', (0, 0), (-1, -1), 6),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ]))
+        return table
+
     def create_contribution_summary(self):
         """Create contribution summary section"""
         contrib = self.data.get('contributions', {})
-        story = []
-        story.append(Paragraph("CONTRIBUTION SUMMARY", self.section_style))
-        
+        story = [Paragraph("CONTRIBUTION SUMMARY", self.section_style)]
+
+        error = self._error_story(contrib)
+        if error:
+            return story + error
         if not isinstance(contrib, dict):
             contrib = {}
-        
-        data = [
-            ['Total Savings:', f"MK {contrib.get('total_savings', 0):,.2f}"],
-            ['Total Loans:', f"MK {contrib.get('total_loans', 0):,.2f}"],
-            ['Total Penalties:', f"MK {contrib.get('total_penalties', 0):,.2f}"],
-            ['Total Interest:', f"MK {contrib.get('total_interest', 0):,.2f}"],
-            ['Net Contribution:', f"MK {(contrib.get('total_savings', 0) + contrib.get('total_loans', 0)):,.2f}"],
+
+        rows = [
+            ['Total Deposits:', self._money(contrib.get('total_savings'))],
+            ['Total Withdrawals:', self._money(contrib.get('total_withdrawals'))],
+            ['Net Savings (this period):', self._money(contrib.get('net_savings'))],
+            ['Total Savings Balance (to date):', self._money(contrib.get('savings_balance'))],
+            ['Social Fund Contributions:', self._money(contrib.get('total_social'))],
+            ['Penalties & Fines:', self._money(contrib.get('total_penalties'))],
+            ['Loan Interest Paid:', self._money(contrib.get('total_interest'))],
         ]
-        
-        table = Table(data, colWidths=[2*inch, 4*inch])
-        table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0fdf4')),
-            ('PADDING', (0, 0), (-1, -1), 6),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ]))
-        
-        story.append(table)
+        story.append(self._summary_table(rows, '#f0fdf4'))
         story.append(Spacer(1, 0.2*inch))
         return story
-    
+
     def create_loan_summary(self):
         """Create loan summary section"""
         loans = self.data.get('loans', {})
-        story = []
-        story.append(Paragraph("LOAN SUMMARY", self.section_style))
-        
+        story = [Paragraph("LOAN SUMMARY", self.section_style)]
+
+        error = self._error_story(loans)
+        if error:
+            return story + error
         if not isinstance(loans, dict):
             loans = {}
-        
-        data = [
-            ['Total Loans:', str(loans.get('total_loans', 0))],
-            ['Total Amount:', f"MK {loans.get('total_amount', 0):,.2f}"],
-            ['Total Repaid:', f"MK {loans.get('total_repaid', 0):,.2f}"],
-            ['Total Balance:', f"MK {loans.get('total_balance', 0):,.2f}"],
-            ['Active Loans:', str(loans.get('active_loans', 0))],
-            ['Approved Loans:', str(loans.get('approved_loans', 0))],
-            ['Completed Loans:', str(loans.get('completed_loans', 0))],
-            ['Defaulted Loans:', str(loans.get('defaulted_loans', 0))],
-            ['Pending Loans:', str(loans.get('pending_loans', 0))],
-            ['Repayment Rate:', f"{loans.get('repayment_rate', 0):.1f}%"],
+
+        rate = float(loans.get('repayment_rate') or 0)
+        rows = [
+            ['Total Loans:', self._count(loans.get('total_loans'))],
+            ['Amount Requested:', self._money(loans.get('total_amount'))],
+            ['Amount Disbursed:', self._money(loans.get('total_disbursed'))],
+            ['Total Repaid:', self._money(loans.get('total_repaid'))],
+            ['Outstanding Balance:', self._money(loans.get('total_balance'))],
+            ['Active Loans:', self._count(loans.get('active_loans'))],
+            ['Approved Loans:', self._count(loans.get('approved_loans'))],
+            ['Completed Loans:', self._count(loans.get('completed_loans'))],
+            ['Defaulted Loans:', self._count(loans.get('defaulted_loans'))],
+            ['Pending Loans:', self._count(loans.get('pending_loans'))],
+            ['Repayment Rate:', f"{rate:.1f}%"],
         ]
-        
-        table = Table(data, colWidths=[2*inch, 4*inch])
-        table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#fef3c7')),
-            ('PADDING', (0, 0), (-1, -1), 6),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ]))
-        
-        story.append(table)
+        story.append(self._summary_table(rows, '#fef3c7'))
         story.append(Spacer(1, 0.2*inch))
         return story
-    
+
     def create_transaction_summary(self):
         """Create transaction summary section"""
         transactions = self.data.get('transactions', {})
-        story = []
-        story.append(Paragraph("TRANSACTION SUMMARY", self.section_style))
-        
+        story = [Paragraph("TRANSACTION SUMMARY", self.section_style)]
+
+        error = self._error_story(transactions)
+        if error:
+            return story + error
         if not isinstance(transactions, dict):
             transactions = {}
-        
-        data = [
-            ['Total Entries:', str(transactions.get('total_entries', 0))],
-            ['Total Debit:', f"MK {transactions.get('total_debit', 0):,.2f}"],
-            ['Total Credit:', f"MK {transactions.get('total_credit', 0):,.2f}"],
-            ['Net Balance:', f"MK {transactions.get('net_balance', 0):,.2f}"],
+
+        rows = [
+            ['Total Entries:', self._count(transactions.get('total_entries'))],
+            ['Total Debit:', self._money(transactions.get('total_debit'))],
+            ['Total Credit:', self._money(transactions.get('total_credit'))],
+            ['Net Balance:', self._money(transactions.get('net_balance'))],
         ]
-        
-        table = Table(data, colWidths=[2*inch, 4*inch])
-        table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#dbeafe')),
-            ('PADDING', (0, 0), (-1, -1), 6),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ]))
-        
-        story.append(table)
+        story.append(self._summary_table(rows, '#dbeafe'))
         story.append(Spacer(1, 0.2*inch))
         return story
-    
+
     def create_attendance_summary(self):
         """Create attendance summary section"""
         attendance = self.data.get('attendance', {})
-        story = []
-        story.append(Paragraph("ATTENDANCE SUMMARY", self.section_style))
-        
+        story = [Paragraph("ATTENDANCE SUMMARY", self.section_style)]
+
+        error = self._error_story(attendance)
+        if error:
+            return story + error
         if not isinstance(attendance, dict):
             attendance = {}
-        
-        data = [
-            ['Total Meetings:', str(attendance.get('total_meetings', 0))],
-            ['Present:', str(attendance.get('present', 0))],
-            ['Absent:', str(attendance.get('absent', 0))],
-            ['Excused:', str(attendance.get('excused', 0))],
-            ['Attendance Rate:', f"{attendance.get('attendance_rate', 0):.1f}%"],
+
+        rate = float(attendance.get('attendance_rate') or 0)
+        rows = [
+            ['Total Meetings:', self._count(attendance.get('total_meetings'))],
+            ['Present:', self._count(attendance.get('present'))],
+            ['Absent:', self._count(attendance.get('absent'))],
         ]
-        
-        table = Table(data, colWidths=[2*inch, 4*inch])
-        table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0fdf4')),
-            ('PADDING', (0, 0), (-1, -1), 6),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ]))
-        
-        story.append(table)
+        # Only shown when the attendance records actually track "excused"
+        if attendance.get('excused') is not None:
+            rows.append(['Excused:', self._count(attendance.get('excused'))])
+        rows.append(['Attendance Rate:', f"{rate:.1f}%"])
+
+        story.append(self._summary_table(rows, '#f0fdf4'))
         story.append(Spacer(1, 0.2*inch))
         return story
-    
+
     def create_member_performance(self):
         """Create member performance section"""
         performance = self.data.get('performance', [])
@@ -462,38 +467,31 @@ class PDFReportGenerator:
     def create_financial_summary(self):
         """Create financial summary section"""
         financial = self.data.get('financial_summary', {})
-        story = []
-        story.append(Paragraph("FINANCIAL SUMMARY", self.section_style))
-        
+        story = [Paragraph("FINANCIAL SUMMARY", self.section_style)]
+
+        error = self._error_story(financial)
+        if error:
+            return story + error
         if not isinstance(financial, dict):
             financial = {}
-        
-        data = [
-            ['Total Savings:', f"MK {financial.get('total_savings', 0):,.2f}"],
-            ['Total Loans Disbursed:', f"MK {financial.get('total_loans_disbursed', 0):,.2f}"],
-            ['Total Repaid:', f"MK {financial.get('total_repaid', 0):,.2f}"],
-            ['Outstanding Balance:', f"MK {financial.get('outstanding_balance', 0):,.2f}"],
-            ['Total Debit:', f"MK {financial.get('total_transactions_debit', 0):,.2f}"],
-            ['Total Credit:', f"MK {financial.get('total_transactions_credit', 0):,.2f}"],
-            ['Net Transactions:', f"MK {financial.get('net_transactions', 0):,.2f}"],
-            ['Total Contributions:', f"MK {financial.get('total_contributions', 0):,.2f}"],
+
+        rows = [
+            ['Net Savings (this period):', self._money(financial.get('total_savings'))],
+            ['Total Savings Balance (to date):', self._money(financial.get('savings_balance'))],
+            ['Social Fund:', self._money(financial.get('total_social_fund'))],
+            ['Total Contributions:', self._money(financial.get('total_contributions'))],
+            ['Loans Disbursed:', self._money(financial.get('total_loans_disbursed'))],
+            ['Loans Repaid:', self._money(financial.get('total_repaid'))],
+            ['Outstanding Loan Balance:', self._money(financial.get('outstanding_balance'))],
+            ['Total Debit:', self._money(financial.get('total_transactions_debit'))],
+            ['Total Credit:', self._money(financial.get('total_transactions_credit'))],
+            ['Net Transactions:', self._money(financial.get('net_transactions'))],
+            ['Ledger Balance (end of period):', self._money(financial.get('ledger_balance'))],
         ]
-        
-        table = Table(data, colWidths=[2.5*inch, 3.5*inch])
-        table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f3e8ff')),
-            ('PADDING', (0, 0), (-1, -1), 6),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ]))
-        
-        story.append(table)
+        story.append(self._summary_table(rows, '#f3e8ff'))
         story.append(Spacer(1, 0.2*inch))
         return story
-    
+
     def create_footer(self):
         """Create report footer"""
         return [
